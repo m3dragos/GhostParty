@@ -52,8 +52,9 @@ Protocol v1: `1:S:map:x:y:facing:speed:hp:hpMax:pw:pwMax:pwType:flags`, `1:H:wan
 - Lua 5.1: no `goto`, no `//`, no `+=`, use `math.floor`, not bit ops (Protocol must stay WoW-free).
 - Keep traffic low: the owner explicitly does **not** want higher polling/send rates; improve display
   (prediction/easing) instead.
-- Friends in your real group (`Geo.InMyGroup`, refreshed on `GROUP_ROSTER_UPDATE`) are filtered out of
-  pins only; their frames stay.
+- Friends in your real group (`Geo.InMyGroup` returns their unit token, refreshed on `GROUP_ROSTER_UPDATE`):
+  no minimap pin; world map shows a name-only label (no dot, mouse disabled) positioned with
+  `C_Map.GetPlayerMapPosition(mapID, unit)` so it sits on Blizzard's marker. Their frames stay.
 - World map pins sit one strata above `WorldMapFrame` (zone-map layers covered them otherwise) and are
   culled manually against `ScrollContainer`.
 - New saved setting → add to `DEFAULTS` in `Core.lua` (merged into existing saves on load).

@@ -32,7 +32,8 @@ drag to move it. The icon turns grey-red while sharing is stopped.
   Dead/Ghost/AFK, "No signal" when updates stop, zone and distance underneath.
 - Left-click a frame to target that friend (works when they are nearby).
 - Class-coloured pins on the minimap (clamped to the edge when far) and the world map.
-  Friends who are also in your real party/raid get no GhostParty pin: Blizzard's own marker shows them.
+  Friends who are also in your real party/raid get no GhostParty minimap pin; on the world map only their
+  name is drawn, over Blizzard's own marker.
 
 ## Appear Offline
 If a friend sets Battle.net to Appear Offline, GhostParty switches to addon whispers to the

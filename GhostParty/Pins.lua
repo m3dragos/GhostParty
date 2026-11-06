@@ -212,8 +212,20 @@ local function UpdateWorldMap(visible, now)
     end
 
     for _, r in ipairs(visible) do
-      local fmap, fx, fy = ns.Members:Position(r, now)
-      if fmap and mapID then fx, fy = Geo.ToMap(fmap, fx, fy, mapID) else fx = nil end
+      -- Friend in your real group: Blizzard draws their marker, we add just the
+      -- name. Use the game's own position for them so the name sits exactly on it.
+      local unit = Geo.InMyGroup(r)
+      local fx, fy
+      if unit and mapID then
+        local pos = Call(C_Map.GetPlayerMapPosition, mapID, unit)
+        if pos then fx, fy = pos:GetXY(); fx, fy = ns.Plain(fx), ns.Plain(fy) end
+        if not fy then fx = nil end
+      end
+      if not fx then
+        local fmap
+        fmap, fx, fy = ns.Members:Position(r, now)
+        if fmap and mapID then fx, fy = Geo.ToMap(fmap, fx, fy, mapID) else fx = nil end
+      end
       if fx and fx >= 0 and fx <= 1 and fy >= 0 and fy <= 1 and InView(fx, fy) then
         local pin = worldPins[r.tag]
         if not pin then
@@ -227,6 +239,10 @@ local function UpdateWorldMap(visible, now)
         if pin:GetFrameStrata() ~= strata then pin:SetFrameStrata(strata) end
         pin:SetScale(pinScale)
         Paint(pin, r, r.live)
+        -- Name only over Blizzard's marker, and let the mouse reach their pin.
+        pin.icon:SetShown(not unit)
+        pin:EnableMouse(not unit)
+        if unit then pin:SetAlpha(1) end
         pin:ClearAllPoints()
         pin:SetPoint("CENTER", canvas, "TOPLEFT", fx * cw / pinScale, -fy * ch / pinScale)
         pin:Show()
@@ -241,9 +257,9 @@ end
 
 ---------------------------------------------------------------------------
 -- Friends who are also in your real party/raid already get Blizzard's own
--- map and minimap markers: don't draw a second one for them.
+-- map and minimap markers: no minimap pin, and only their name on the world map.
 ---------------------------------------------------------------------------
-local grouped = {}   -- lowercased "Name" and "Name-Realm" of your group members
+local grouped = {}   -- lowercased "Name" and "Name-Realm" -> unit token ("party2", "raid7")
 
 local function RefreshGroup()
   wipe(grouped)
@@ -251,16 +267,18 @@ local function RefreshGroup()
   if n == 0 then return end
   local prefix = Call(IsInRaid) and "raid" or "party"
   for i = 1, n do
-    local name, realm = Call(UnitName, prefix .. i)
+    local unit = prefix .. i
+    local name, realm = Call(UnitName, unit)
     if name and name ~= "" then
-      grouped[name:lower()] = true
-      if realm and realm ~= "" then grouped[(name .. "-" .. realm):lower()] = true end
+      grouped[name:lower()] = unit
+      if realm and realm ~= "" then grouped[(name .. "-" .. realm):lower()] = unit end
     end
   end
 end
 
+-- The friend's unit token if they're in your group, else nil.
 function Geo.InMyGroup(r)
-  return r.name ~= nil and grouped[r.name:lower()] == true
+  return r.name and grouped[r.name:lower()] or nil
 end
 
 ns:On("GROUP_ROSTER_UPDATE", RefreshGroup)
@@ -275,12 +293,12 @@ driver:SetScript("OnUpdate", function(_, dt)
   elapsed = 0
   if not ns.db then return end
   local now = GetTime()
-  local visible = {}
-  for _, r in ipairs(ns.Members:Visible()) do
-    if not Geo.InMyGroup(r) then visible[#visible + 1] = r end
+  local all, ungrouped = ns.Members:Visible(), {}
+  for _, r in ipairs(all) do
+    if not Geo.InMyGroup(r) then ungrouped[#ungrouped + 1] = r end
   end
-  local ok, err = pcall(UpdateMinimap, visible, now)
+  local ok, err = pcall(UpdateMinimap, ungrouped, now)
   if not ok then ns.Debug("minimap pins:", err) end
-  ok, err = pcall(UpdateWorldMap, visible, now)
+  ok, err = pcall(UpdateWorldMap, all, now)
   if not ok then ns.Debug("world map pins:", err) end
 end)

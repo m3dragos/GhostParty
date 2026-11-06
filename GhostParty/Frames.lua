@@ -151,7 +151,14 @@ local function ShowTooltip(owner, r)
   if yards then GameTooltip:AddLine(("%d yards away"):format(yards), 1, 1, 1) end
   local age = r.heardAt and GetTime() - r.heardAt
   if age and age > 3 then GameTooltip:AddLine(("Last update %ds ago"):format(age), 0.6, 0.6, 0.6) end
-  if not r.sim then GameTooltip:AddLine("Click to target (when nearby)", 0.4, 0.8, 1) end
+  if not r.sim then
+    GameTooltip:AddLine("Left-click: target (when nearby)", 0.4, 0.8, 1)
+    if ns.Geo and ns.Geo.InMyGroup(r) then
+      GameTooltip:AddLine("In your group", 0.6, 0.6, 0.6)
+    else
+      GameTooltip:AddLine("Right-click: invite to group", 0.4, 0.8, 1)
+    end
+  end
   GameTooltip:Show()
 end
 
@@ -164,6 +171,8 @@ local function BuildClick(i)
   b:RegisterForClicks("AnyUp", "AnyDown")
   b:SetAttribute("type1", "macro")
   b:SetAttribute("macrotext1", "")
+  b:SetAttribute("type2", "macro")
+  b:SetAttribute("macrotext2", "")
   b:SetScript("OnEnter", function(self) ShowTooltip(self, ns.Members:Get(assigned[i] or "", true)) end)
   b:SetScript("OnLeave", GameTooltip_Hide)
   b:Hide()
@@ -236,8 +245,12 @@ local function UpdateSecure()
   pendingSecure = false
   for i, s in ipairs(slots) do
     local r = assigned[i] and ns.Members:Get(assigned[i], true)
-    local target = (r and not r.sim and r.name) and ("/target " .. r.name) or ""
+    local real = r and not r.sim and r.name
+    local target = real and ("/target " .. r.name) or ""
+    -- Right-click invites, unless they're already in your group.
+    local invite = (real and not (ns.Geo and ns.Geo.InMyGroup(r))) and ("/invite " .. r.name) or ""
     if s.click:GetAttribute("macrotext1") ~= target then s.click:SetAttribute("macrotext1", target) end
+    if s.click:GetAttribute("macrotext2") ~= invite then s.click:SetAttribute("macrotext2", invite) end
     s.click:SetShown(r ~= nil)
   end
 end
@@ -364,6 +377,15 @@ ns:On("PLAYER_LOGIN", function()
   F:ApplySettings()
   -- Distance and "No signal" change without messages arriving.
   C_Timer.NewTicker(0.5, function() F:Refresh() end)
+end)
+
+-- Joining/leaving a group changes who right-click can invite. Wait a frame so
+-- the group list in Pins.lua has refreshed first.
+ns:On("GROUP_ROSTER_UPDATE", function()
+  C_Timer.After(0, function()
+    pendingSecure = true
+    F:Refresh()
+  end)
 end)
 
 ns:On("PLAYER_REGEN_ENABLED", function()
