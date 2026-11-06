@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: GhostParty
+## Notes: Party frames and live map pins for Battle.net friends, without being in a group.
+## Author: Dragos
+## Version: 0.2.0
+## SavedVariables: GhostPartyDB
+
+Core.lua
+Protocol.lua
+Roster.lua
+Comm.lua
+State.lua
+Members.lua
+Frames.lua
+Pins.lua
+Sim.lua
+Button.lua
