@@ -240,6 +240,33 @@ local function UpdateWorldMap(visible, now)
 end
 
 ---------------------------------------------------------------------------
+-- Friends who are also in your real party/raid already get Blizzard's own
+-- map and minimap markers: don't draw a second one for them.
+---------------------------------------------------------------------------
+local grouped = {}   -- lowercased "Name" and "Name-Realm" of your group members
+
+local function RefreshGroup()
+  wipe(grouped)
+  local n = Call(GetNumGroupMembers) or 0
+  if n == 0 then return end
+  local prefix = Call(IsInRaid) and "raid" or "party"
+  for i = 1, n do
+    local name, realm = Call(UnitName, prefix .. i)
+    if name and name ~= "" then
+      grouped[name:lower()] = true
+      if realm and realm ~= "" then grouped[(name .. "-" .. realm):lower()] = true end
+    end
+  end
+end
+
+function Geo.InMyGroup(r)
+  return r.name ~= nil and grouped[r.name:lower()] == true
+end
+
+ns:On("GROUP_ROSTER_UPDATE", RefreshGroup)
+ns:On("PLAYER_ENTERING_WORLD", RefreshGroup)
+
+---------------------------------------------------------------------------
 local elapsed = 0
 local driver = CreateFrame("Frame")
 driver:SetScript("OnUpdate", function(_, dt)
@@ -248,7 +275,10 @@ driver:SetScript("OnUpdate", function(_, dt)
   elapsed = 0
   if not ns.db then return end
   local now = GetTime()
-  local visible = ns.Members:Visible()
+  local visible = {}
+  for _, r in ipairs(ns.Members:Visible()) do
+    if not Geo.InMyGroup(r) then visible[#visible + 1] = r end
+  end
   local ok, err = pcall(UpdateMinimap, visible, now)
   if not ok then ns.Debug("minimap pins:", err) end
   ok, err = pcall(UpdateWorldMap, visible, now)

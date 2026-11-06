@@ -4,7 +4,7 @@ A World of Warcraft: Forever addon that shows Battle.net friends as if you were 
 (party frames, minimap and world map pins) **without actually grouping**, so there is no shared loot or XP split.
 Everyone involved runs the addon and broadcasts their own state.
 
-Client: WoW Forever 1.60.1 (interface 16001). Current version: 0.2.0.
+Client: WoW Forever 1.60.1 (interface 16001). Current version: 0.2.1.
 
 ## Repository layout
 ```

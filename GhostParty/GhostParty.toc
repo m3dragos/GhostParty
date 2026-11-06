@@ -2,7 +2,7 @@
 ## Title: GhostParty
 ## Notes: Party frames and live map pins for Battle.net friends, without being in a group.
 ## Author: Dragos
-## Version: 0.2.0
+## Version: 0.2.1
 ## SavedVariables: GhostPartyDB
 
 Core.lua
