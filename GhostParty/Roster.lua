@@ -8,6 +8,7 @@ ns.Roster = R
 
 local online = {}     -- battleTag -> { gameAccountID, name, level, className, area, accountName }
 local byGameID = {}   -- gameAccountID -> battleTag
+local elsewhere = {}  -- battleTag -> true: visible on Battle.net, but not in any WoW client
 local lastListing = {} -- index -> battleTag, from the last /gp friends
 
 -- On Forever the client reports WOW_PROJECT_ID 1 (like Retail), but Battle.net
@@ -34,6 +35,7 @@ local function Key(s) return s and s:lower() end
 function R:Scan()
   wipe(online)
   wipe(byGameID)
+  wipe(elsewhere)
   if not (BNGetNumFriends and C_BattleNet and C_BattleNet.GetFriendAccountInfo) then return end
   local total = ns.Call(BNGetNumFriends)
   for i = 1, (total or 0) do
@@ -41,8 +43,13 @@ function R:Scan()
     local tag = type(a) == "table" and ns.Plain(a.battleTag)
     if tag then
       local n = ns.Call(C_BattleNet.GetFriendNumGameAccounts, i) or 0
+      local inWow, visible = false, false
       for j = 1, n do
         local g = ns.Call(C_BattleNet.GetFriendGameAccountInfo, i, j)
+        if type(g) == "table" and g.isOnline then
+          visible = true
+          if g.clientProgram == BNET_CLIENT_WOW then inWow = true end
+        end
         if type(g) == "table" and g.isOnline and g.clientProgram == BNET_CLIENT_WOW
           and g.gameAccountID and g.characterName and g.characterName ~= "" and SameGame(g) then
           local realm = g.realmName and g.realmName ~= "" and g.realmName:gsub("%s", "") or nil
@@ -58,6 +65,9 @@ function R:Scan()
           byGameID[g.gameAccountID] = tag
         end
       end
+      -- Appear Offline hides the whole account, so someone visibly online in
+      -- the Battle.net app or another game can't be in Forever: don't probe.
+      if visible and not inWow then elsewhere[tag] = true end
     end
   end
   -- Use Battle.net's spelling for members typed by hand ("bob#1234" -> "Bob#1234"),
@@ -145,11 +155,11 @@ function R:Route(tag)
   if b and now - b.at < ROUTE_FRESH then return "BN", b.id end
 end
 
--- Members we can't reach: candidates for a whisper probe.
+-- Members we can't reach and who might be Appearing Offline: candidates for a whisper probe.
 function R:Unreachable()
   local out = {}
   for _, tag in ipairs(ns.db.members) do
-    if not self:Route(tag) then out[#out + 1] = tag end
+    if not self:Route(tag) and not elsewhere[tag] then out[#out + 1] = tag end
   end
   return out
 end
@@ -301,6 +311,7 @@ local function ScanSoon()
     for tag in pairs(before) do
       if not online[tag] and R:IsMember(tag) then
         local wentAt = GetTime()
+        ns.Comm:ResetProbe(tag)
         ns.Comm:Probe(tag)
         C_Timer.After(20, function()
           local r = ns.Members:Get(tag, true)

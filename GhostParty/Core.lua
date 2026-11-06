@@ -4,7 +4,7 @@ local ADDON, ns = ...
 -- NOT in your group. Every member runs the addon and broadcasts their own
 -- state over Battle.net addon messages; nothing is read from other players.
 
-ns.VERSION = "0.3.0"
+ns.VERSION = "0.3.1"
 ns.PROTOCOL = 1
 
 local DEFAULTS = {

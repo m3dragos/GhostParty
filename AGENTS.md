@@ -21,6 +21,8 @@ read from other players' units (impossible when ungrouped). Owner plays with Bat
 - No map coordinates inside instances (`C_Map.GetPlayerMapPosition` returns nil).
 - Trial / Invite-A-Friend accounts cannot send addon messages.
 - Throttle: ~10-message burst per prefix, ~1/s refill. We assume the same for Battle.net game data.
+- `C_ChatInfo.InChatMessagingLockdown()` exists on Forever (Midnight addon-comm restriction); treat a secret result as locked.
+  `SendAddonMessage` returns `Enum.SendAddonMessageResult`: anything but `Success` is a failure, throttle codes mean retry.
 - "Appear Offline" hides a friend's game account from Battle.net: fall back to addon `WHISPER` to known characters.
 - Party frame art: atlas `UI-HUD-UnitFrame-Party-PortraitOn` (+ `-Bar-Health-Mask`, `-Bar-Mana-Mask`,
   `ui-hud-unitframe-party-portraiton-incombat`); fallback `Interface\TargetingFrame\UI-PartyFrame`.
@@ -33,7 +35,7 @@ read from other players' units (impossible when ungrouped). Owner plays with Bat
 | `Core.lua` | namespace, event bus `ns:On`, saved vars `GhostPartyDB` (defaults table), helpers, slash commands, `ns.SetSharing`, `ns.SetFramesShown` |
 | `Protocol.lua` | pure-Lua wire format (no WoW API): `EncodeState/Hello/Bye`, `Decode`, flags |
 | `Roster.lua` | Battle.net scan, members by BattleTag, remembered characters, **routing** (`Route(tag)` → BN or WHISPER) |
-| `Comm.lua` | token buckets over 4 prefixes, urgent FIFO + latest-state-per-friend, BN + whisper send/receive, whisper probes, "No player named" chat filter |
+| `Comm.lua` | token buckets over 4 prefixes; priority urgent FIFO > latest-state-per-friend > whisper probes (spare tokens only); pauses during `InChatMessagingLockdown`; BN + whisper send/receive; probe backoff; "No player named" chat filter |
 | `State.lua` | samples own character every 0.1 s, sends on change (2.5 yd, start/stop, turn, stats) + 4 s heartbeat; hellos |
 | `Members.lua` | per-friend records, staleness, velocity estimate, smoothed predicted position |
 | `Frames.lua` | party-style frames, created on demand (no member cap), one column growing downward (owner's choice: no wrapping); visual layer (insecure) + click layer (secure: left `/target`, right `/invite` unless grouped) |
@@ -54,6 +56,9 @@ Protocol v1: `1:S:map:x:y:facing:speed:hp:hpMax:pw:pwMax:pwType:flags`, `1:H:wan
 - Lua 5.1: no `goto`, no `//`, no `+=`, use `math.floor`, not bit ops (Protocol must stay WoW-free).
 - Keep traffic low: the owner explicitly does **not** want higher polling/send rates; improve display
   (prediction/easing) instead.
+- Whisper probes back off per member (20 s doubling to 5 min, reset when heard from or when they leave
+  Battle.net) and skip friends visible on Battle.net outside WoW. Never go back to fixed-rate probing
+  of offline characters: it is the one traffic pattern that looks like spam.
 - Friends in your real group (`Geo.InMyGroup` returns their unit token, refreshed on `GROUP_ROSTER_UPDATE`):
   no minimap pin; world map shows a name-only label (no dot, mouse disabled) positioned with
   `C_Map.GetPlayerMapPosition(mapID, unit)` so it sits on Blizzard's marker. Their frames stay.
