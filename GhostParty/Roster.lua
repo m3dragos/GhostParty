@@ -227,9 +227,6 @@ function R:AddMember(arg)
     return ns.Print("Couldn't find that friend. Use /gp friends, then /gp add <number>.")
   end
   if self:IsMember(tag) then return ns.Print(tag, "is already in your ghost party.") end
-  if #ns.db.members >= ns.MAX_SLOTS then
-    return ns.Print("Your ghost party is full (" .. ns.MAX_SLOTS .. "). Remove someone first.")
-  end
   table.insert(ns.db.members, tag)
   ns.Print("Added", tag .. ". They need GhostParty too, and need to add you back.")
   if online[tag] then ns.State:SendHello(true, tag) end

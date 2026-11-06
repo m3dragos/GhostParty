@@ -36,7 +36,7 @@ read from other players' units (impossible when ungrouped). Owner plays with Bat
 | `Comm.lua` | token buckets over 4 prefixes, urgent FIFO + latest-state-per-friend, BN + whisper send/receive, whisper probes, "No player named" chat filter |
 | `State.lua` | samples own character every 0.1 s, sends on change (2.5 yd, start/stop, turn, stats) + 4 s heartbeat; hellos |
 | `Members.lua` | per-friend records, staleness, velocity estimate, smoothed predicted position |
-| `Frames.lua` | party-style frames; visual layer (insecure) + click layer (secure `/target`) |
+| `Frames.lua` | party-style frames, created on demand (no member cap), one column growing downward (owner's choice: no wrapping); visual layer (insecure) + click layer (secure: left `/target`, right `/invite` unless grouped) |
 | `Pins.lua` | `ns.Geo` map math, minimap pins, world map pins |
 | `Sim.lua` | `/gp sim` fake friend through the real encode/decode path |
 | `Button.lua` | minimap button (left: frames, right: sharing) |
@@ -47,7 +47,9 @@ Protocol v1: `1:S:map:x:y:facing:speed:hp:hpMax:pw:pwMax:pwType:flags`, `1:H:wan
 ## Rules that are easy to break
 - **Combat lockdown**: secure click buttons can't be shown, hidden, moved or re-attributed in combat.
   Visual frames must not be anchor targets of secure frames (click buttons are anchored to the anchor frame).
-  Defer with `pendingSecure` and apply on `PLAYER_REGEN_ENABLED`.
+  Defer with `pendingSecure` and apply on `PLAYER_REGEN_ENABLED`. A slot's secure button is created
+  lazily out of combat (`EnsureSlot`); a friend appearing mid-combat gets a frame but no click until combat ends.
+- More members = same total send budget split thinner (4 prefixes × ~1 msg/s). Don't "fix" by raising rates.
 - Every WoW API call that can fail or return secrets goes through `ns.Call` or `pcall`.
 - Lua 5.1: no `goto`, no `//`, no `+=`, use `math.floor`, not bit ops (Protocol must stay WoW-free).
 - Keep traffic low: the owner explicitly does **not** want higher polling/send rates; improve display

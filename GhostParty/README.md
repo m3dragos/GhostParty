@@ -16,7 +16,7 @@ Try it alone first: `/gp sim` adds a fake friend running circles around you.
 ## Commands
 | Command | |
 |---|---|
-| `/gp friends`, `/gp add`, `/gp remove`, `/gp list` | manage who you share with (max 4) |
+| `/gp friends`, `/gp add`, `/gp remove`, `/gp list` | manage who you share with (no limit) |
 | `/gp lock` / `unlock` / `reset` / `scale 1.2` | frame position and size |
 | `/gp stop` / `start` | stop / resume sharing your position; also hides map pins (remembered across reloads) |
 | `/gp frames` / `pins` | toggle frames / map pins |
@@ -42,6 +42,8 @@ game's "No player named ..." messages those checks cause. `/gp list` shows "via 
 A friend who has never been seen online by your addon can't be found this way.
 
 ## Known limits
+- No cap on friends, but the send budget is fixed (about 4 messages/second total), so each friend gets
+  fewer updates as the group grows: ~2/s each with 2 friends, ~0.4/s each with 10.
 - Health/power can be secret in combat on Forever: frames then show the last value from before combat.
 - No coordinates inside dungeons/raids: the frame shows "<instance> (inside)" and pins hide.
 - Trial / Invite-A-Friend accounts can't send addon messages (they still see others).

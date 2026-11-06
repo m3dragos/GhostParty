@@ -4,9 +4,8 @@ local ADDON, ns = ...
 -- NOT in your group. Every member runs the addon and broadcasts their own
 -- state over Battle.net addon messages; nothing is read from other players.
 
-ns.VERSION = "0.2.2"
+ns.VERSION = "0.3.0"
 ns.PROTOCOL = 1
-ns.MAX_SLOTS = 4
 
 local DEFAULTS = {
   members = {},        -- ordered list of BattleTags you share with

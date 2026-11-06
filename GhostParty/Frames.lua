@@ -82,10 +82,16 @@ local function MakeBar(parent, g, color)
   return bar
 end
 
+-- One column growing downward, however many friends there are.
+local function PlaceSlot(frame, i)
+  frame:ClearAllPoints()
+  frame:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -(i - 1) * (kit.h + SPACING))
+end
+
 local function BuildVisual(i)
   local v = CreateFrame("Frame", nil, anchor)
   v:SetSize(kit.w, kit.h)
-  v:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -(i - 1) * (kit.h + SPACING))
+  PlaceSlot(v, i)
 
   v.portrait = v:CreateTexture(nil, "BACKGROUND", nil, 1)
   Place(v.portrait, v, { x = kit.portrait.x, y = kit.portrait.y, w = kit.portrait.s, h = kit.portrait.s })
@@ -167,7 +173,7 @@ local function BuildClick(i)
   -- Anchored to the anchor, not the visual: a frame a secure button is anchored
   -- to gets restricted in combat, and the visual must stay free to change.
   b:SetSize(kit.w, kit.h)
-  b:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -(i - 1) * (kit.h + SPACING))
+  PlaceSlot(b, i)
   b:RegisterForClicks("AnyUp", "AnyDown")
   b:SetAttribute("type1", "macro")
   b:SetAttribute("macrotext1", "")
@@ -217,11 +223,20 @@ local function Build()
     ns.db.point = { p, rp, x, y }
   end)
 
-  for i = 1, ns.MAX_SLOTS do
-    local visual = BuildVisual(i)
-    slots[i] = { visual = visual, click = BuildClick(i) }
-  end
   ApplyAnchor()
+end
+
+-- Slots are made on demand, so there's no limit on friends. The visual part
+-- can be made any time; the secure click part only out of combat.
+local function EnsureSlot(i)
+  local s = slots[i]
+  if not s then
+    s = { visual = BuildVisual(i) }
+    slots[i] = s
+  end
+  if not s.click then
+    if InCombatLockdown() then pendingSecure = true else s.click = BuildClick(i) end
+  end
 end
 
 function F:ApplySettings()
@@ -231,6 +246,11 @@ function F:ApplySettings()
     return
   end
   ApplyAnchor()
+  -- Re-place every slot (also covers slots made while in combat).
+  for i, s in pairs(slots) do
+    PlaceSlot(s.visual, i)
+    if s.click then PlaceSlot(s.click, i) end
+  end
   handle:SetShown(not ns.db.locked)
   anchor:SetShown(ns.db.showFrames)
   self:Refresh()
@@ -243,7 +263,8 @@ local function UpdateSecure()
     return
   end
   pendingSecure = false
-  for i, s in ipairs(slots) do
+  for i, s in pairs(slots) do
+    if not s.click then s.click = BuildClick(i) end
     local r = assigned[i] and ns.Members:Get(assigned[i], true)
     local real = r and not r.sim and r.name
     local target = real and ("/target " .. r.name) or ""
@@ -338,29 +359,32 @@ function F:Refresh()
   local changed = false
 
   if not InCombatLockdown() then
-    -- Out of combat: pack frames top-down in list order, no gaps.
-    for i = 1, ns.MAX_SLOTS do
+    -- Out of combat: pack frames in list order, no gaps.
+    local highest = 0
+    for i in pairs(assigned) do highest = math.max(highest, i) end
+    for i = 1, math.max(#visible, highest) do
       local tag = visible[i] and visible[i].tag
       if assigned[i] ~= tag then assigned[i] = tag; changed = true end
     end
   end
 
   -- In combat click targets can't change: existing members keep their slot,
-  -- leavers leave a gap and newcomers take a free one until combat ends.
-  for i = 1, ns.MAX_SLOTS do
-    if assigned[i] and not want[assigned[i]] then assigned[i] = nil; changed = true end
+  -- leavers leave a gap and newcomers take the first free one until combat ends.
+  for i, tag in pairs(assigned) do
+    if not want[tag] then assigned[i] = nil; changed = true end
   end
   local placed = {}
-  for i = 1, ns.MAX_SLOTS do if assigned[i] then placed[assigned[i]] = true end end
+  for _, tag in pairs(assigned) do placed[tag] = true end
   for _, r in ipairs(visible) do
     if not placed[r.tag] then
-      for i = 1, ns.MAX_SLOTS do
-        if not assigned[i] then assigned[i] = r.tag; placed[r.tag] = true; changed = true; break end
-      end
+      local i = 1
+      while assigned[i] do i = i + 1 end
+      assigned[i], placed[r.tag], changed = r.tag, true, true
     end
   end
+  for i in pairs(assigned) do EnsureSlot(i) end
 
-  for i, s in ipairs(slots) do
+  for i, s in pairs(slots) do
     local r = assigned[i] and want[assigned[i]]
     if r then
       UpdateVisual(s.visual, r, now)
