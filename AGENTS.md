@@ -61,6 +61,10 @@ Protocol v1: `1:S:map:x:y:facing:speed:hp:hpMax:pw:pwMax:pwType:flags`, `1:H:wan
   culled manually against `ScrollContainer`.
 - New saved setting → add to `DEFAULTS` in `Core.lua` (merged into existing saves on load).
 - Bump version in **both** `GhostParty.toc` and `Core.lua`.
+- **Releases = push to `main` with a higher TOC version.** Friends run `updater/GhostPartyUpdater.ps1` as a
+  scheduled task; it reads `## Version` from the raw TOC on GitHub and installs only if it is higher
+  (`[version]` compare). Keep the addon folder at `GhostParty/` in the repo root, and keep the updater
+  ASCII-only (PS 5.1). The updater replaces itself from the downloaded archive, so updater fixes ship too.
 
 ## Testing
 - No Lua interpreter on the owner's machine. Run `node tools/check.js GhostParty/*.lua` (rough structure check only).
