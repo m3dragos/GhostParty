@@ -5,7 +5,7 @@ local ADDON, ns = ...
 -- Every member runs the addon and broadcasts their own state over Battle.net
 -- addon messages; nothing is read from other players.
 
-ns.VERSION = "0.4.1"
+ns.VERSION = "0.4.2"
 ns.PROTOCOL = 1
 ns.NAME = "Angura" -- the name players see; the project, folder and saved variables stay GhostParty
 
@@ -23,6 +23,7 @@ local DEFAULTS = {
   buttonAngle = 215,   -- minimap button position, degrees (0 = east)
   minInterval = 0.5,   -- seconds between state updates to one friend
   debug = false,
+  feedLog = {},        -- the Angura tab's history (news and party chat), replayed after a reload or restart
   chatTab = false,     -- the Angura chat tab was opened once (closing it is then the player's choice)
   signalLog = {},      -- one line per "No signal" gap (Members.lua), read from the saved file
 }

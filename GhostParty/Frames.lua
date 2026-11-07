@@ -86,14 +86,31 @@ local function FullName(r)
   return ns.Roster:Chars(r.tag)[1] or r.name
 end
 
+-- Battle.net friends: Blizzard's own friends-list invite (player GUID + game
+-- account), which works across realms. "Name-Realm" built from Battle.net's
+-- realm field doesn't ("Cannot find player"). By name only as a last resort
+-- (a friend reached by whisper while Appearing Offline).
 local function Invite(r)
+  local o = ns.Roster:Online(r.tag)
+  local id = o and o.gameAccountID
+  local U = FriendsListUtil
+  if id and U and U.InviteOrRequestToJoin and C_BattleNet and C_BattleNet.GetGameAccountInfoByID then
+    local info = Call(C_BattleNet.GetGameAccountInfoByID, id)
+    local guid = type(info) == "table" and ns.Plain(info.playerGuid)
+    if guid and pcall(U.InviteOrRequestToJoin, guid, id) then return end
+  end
   local f = C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit
   if f and r.name then pcall(f, FullName(r)) end
 end
 
+-- In your group they have a unit token: uninvite by the name the client
+-- itself gives that unit.
 local function Uninvite(r)
   local f = C_PartyInfo and C_PartyInfo.UninviteUnit or UninviteUnit
-  if f and r.name then pcall(f, FullName(r)) end
+  if not f then return end
+  local unit = ns.Geo and ns.Geo.InMyGroup(r)
+  local name = unit and Call(GetUnitName, unit, true)
+  if name or r.name then pcall(f, name or FullName(r)) end
 end
 
 -- Find: Blizzard's own map pin and on-screen arrow at the friend's position,

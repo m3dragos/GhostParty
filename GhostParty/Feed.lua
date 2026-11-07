@@ -43,12 +43,41 @@ end
 
 -- News goes to the Angura tab (or the main window if it's closed). Party chat
 -- (alsoMain) goes to the main chat window as well, like real party chat.
-local function Say(text, r, g, b, alsoMain)
+-- Every line is also saved (GhostPartyDB.feedLog) and replayed into the tab
+-- after a reload or restart, so the history survives.
+local MAX_HISTORY = 150
+
+local function Show(text, r, g, b, alsoMain)
   local frame = FindTab()
   if frame then frame:AddMessage(text, r, g, b) end
   if (not frame or alsoMain) and frame ~= DEFAULT_CHAT_FRAME then
     DEFAULT_CHAT_FRAME:AddMessage("[" .. ns.NAME .. "] " .. text, r, g, b)
   end
+end
+
+local function Say(text, r, g, b, alsoMain)
+  Show(text, r, g, b, alsoMain)
+  local log = ns.db.feedLog
+  log[#log + 1] = { t = time(), text = text, r = r, g = g, b = b }
+  while #log > MAX_HISTORY do table.remove(log, 1) end
+end
+
+-- Earlier lines, each with its time in grey (and the date when it isn't today).
+local replayed = false
+function Feed:Replay()
+  if replayed then return end
+  replayed = true
+  local log = ns.db.feedLog
+  if #log == 0 then return end
+  local today = date("%Y-%m-%d")
+  local frame = FindTab() or DEFAULT_CHAT_FRAME
+  for _, e in ipairs(log) do
+    local when = date("%Y-%m-%d", e.t) == today and date("%H:%M", e.t) or date("%d %b %H:%M", e.t)
+    local text = "|cff808080" .. when .. "|r " .. e.text
+    if frame == DEFAULT_CHAT_FRAME then text = "[" .. ns.NAME .. "] " .. text end
+    frame:AddMessage(text, e.r, e.g, e.b)
+  end
+  frame:AddMessage("|cff808080~ earlier messages above ~|r", 0.5, 0.5, 0.5)
 end
 
 -- Opens the tab (once; /angura chat brings it back). Out of combat only.
@@ -84,7 +113,7 @@ end
 local function Who(rec)
   local name = rec.name or rec.tag
   local colored = "|cff" .. Hex(ns.ClassColor(rec.class)) .. name .. "|r"
-  local full = not rec.sim and ns.Roster:Chars(rec.tag)[1]
+  local full = not rec.sim and not rec.isSelf and ns.Roster:Chars(rec.tag)[1]
   if full then return "|Hplayer:" .. full .. "|h" .. colored .. "|h" end
   return colored
 end
@@ -211,7 +240,7 @@ function Feed:OnEvent(rec, msg)
     if not level then return end
     rec.level = level
     Say(Who(rec) .. " reached level " .. level .. "!", unpack(GOLD))
-    if level % 10 == 0 then Banner((rec.name or rec.tag) .. " reached level " .. level .. "!") end
+    if level % 10 == 0 and not rec.isSelf then Banner((rec.name or rec.tag) .. " reached level " .. level .. "!") end
   elseif kind == "dead" then
     local zone, sub = a[1], a[2]
     local where = (sub and sub ~= "" and zone and sub ~= zone) and (sub .. ", " .. zone) or zone or "?"
@@ -314,7 +343,22 @@ end
 ---------------------------------------------------------------------------
 -- Sending: our own moments
 ---------------------------------------------------------------------------
-local function Event(kind, ...) ns.State:SendEvent(kind, ...) end
+-- Our own moments: sent to friends, and shown in our own feed too, so everyone
+-- has the same history. (Blizzard already celebrates your own level-up: no banner.)
+local function Me()
+  local _, class = UnitClass("player")
+  return { name = UnitName("player"), class = class, tag = UnitName("player"), isSelf = true }
+end
+
+local function Event(kind, ...)
+  ns.State:SendEvent(kind, ...)
+  local args = {}
+  for i = 1, select("#", ...) do
+    local v = select(i, ...)
+    if v ~= nil then args[i] = tostring(v) end
+  end
+  Feed:OnEvent(Me(), { kind = kind, args = args })
+end
 
 -- A Lua pattern from a global format string, plus which argument each
 -- capture is ("%2$s has fled from %1$s" captures argument 2 first).
@@ -432,7 +476,11 @@ ns:On("CHAT_MSG_SYSTEM", function(text)
 end)
 
 ns:On("PLAYER_LOGIN", function()
-  if not ns.db.chatTab then C_Timer.After(3, function() Feed:MakeTab() end) end
+  if not ns.db.chatTab then
+    C_Timer.After(3, function() Feed:MakeTab(); Feed:Replay() end)
+  else
+    C_Timer.After(1, function() Feed:Replay() end)
+  end
   for i = 1, (NUM_CHAT_WINDOWS or 10) do
     local cf = _G["ChatFrame" .. i]
     HookBox(_G["ChatFrame" .. i .. "EditBox"] or (cf and cf.editBox))

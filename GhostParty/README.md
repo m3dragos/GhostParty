@@ -40,6 +40,8 @@ posts news and says hello on party chat. `/gp` works the same as `/angura`.
   - Hover for race, guild, home inn and more.
 - **Angura chat tab** (made once, then yours to move, dock or close): friends' news and party chat.
   Party chat also shows in your main chat window, as `[Angura] [Name]: ...` in party colours.
+  Your own news shows there too (everyone sees the same history), and the last 150 lines come back
+  after a reload or restart, with their times.
   - News: level-ups (every 10th level gets a banner and sound), deaths, entering a dungeon, raid or
     battleground, rare kills, blue-or-better loot (hover the link), duels, coming online / going offline.
 - **Map pins**: class-coloured pins on the minimap (clamped to the edge when far) and the world map.

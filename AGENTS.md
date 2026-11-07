@@ -40,6 +40,10 @@ Slash: `/angura` (same as `/gp`, `/ghostparty`); party chat `/an`.
   Friends play on different realms, so a custom chat channel can't reach them: party chat goes over addon messages.
 - `C_PartyInfo.InviteUnit` / `UninviteUnit` and the user waypoint + `C_SuperTrack` work from insecure code
   (EllesmereUI and ForeverPlusPlus do it), so those buttons work in combat.
+- Inviting by "Name-Realm" built from Battle.net (`Nicholas Plague-CAMWOWEU5Realm6PvP`) fails cross-realm with
+  "Cannot find player" (owner, 0.4.1). Invite Battle.net friends with Blizzard's
+  `FriendsListUtil.InviteOrRequestToJoin(playerGuid, gameAccountID)` (what EllesmereUI's friends list does);
+  uninvite with `GetUnitName(unit, true)` of their group unit. The whisper fallback still uses Name-Realm: unverified.
 - Battle.net reports Forever with its **own `wowProjectID`**, while the client's `WOW_PROJECT_ID` is 1.
   Compare friends against our own entry (`C_BattleNet.GetGameAccountInfoByGUID(UnitGUID("player"))`).
 - `BN_CHAT_MSG_ADDON` args: `prefix, text, channel, gameAccountID`. Send with
@@ -105,6 +109,9 @@ whole message.
   and flights as too spammy, and doesn't want progress bars. Presence: a bye waits 25 s (a /reload sends one
   and says hello again); "came online" needs a hello with `want` (they just logged in) or an earlier
   "went offline". Re-entering the same instance within 30 min of leaving isn't news.
+- Feed history: every line (news and chat) goes to `db.feedLog` (last 150) and is replayed into the tab on
+  login. Our own moments are shown locally as well as sent, through the same `Feed:OnEvent` (record with
+  `isSelf`: no whisper link, no banner), so duel lines de-duplicate against the friend's copy.
 - Sticky `/an` (`Feed.lua`): post-hooks `OnEditFocusGained`/`OnEditFocusLost`/`OnTextChanged` on the chat edit boxes and
   types `/an ` into an empty box; never writes Blizzard's edit box attributes or fields (taint). Whisper replies are left alone.
 - Text from friends is untrusted: `Feed.lua` `Sanitize` keeps only item links (rebuilt by us) and shows
