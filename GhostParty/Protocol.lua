@@ -8,8 +8,15 @@ ns = ns or {}
 --       x, y      map position * 10000 (0..10000)
 --       facing    degrees 0..359
 --       speed     yards/second * 10
+--       hp..pwType are always "-" since 0.4.0 (secret on Forever)
 --   1:H:want:level:class:name:zone      want = 1 asks the receiver to answer with its own H
---   1:B                                 logging out
+--   1:B[:reason]                        leaving: reason 1 (or none) logout, 2 stopped sharing
+--   1:I:status:group:instType:subzone:race:guild:home
+--       status    ST_* bits (flying, taxi, resting, ...), group = real group size (0 = solo)
+--   1:E:kind[:arg...]                   feed event: lvl, dead, inst, rare, loot, duel
+--   1:C:text                            party chat line (text may contain ':')
+--
+-- 0.3.x clients drop I, E and C as malformed ("ignored") and accept "1:B:2" as a bye.
 
 local P = {}
 ns.Protocol = P
@@ -21,6 +28,19 @@ P.FLAG_GHOST = 2
 P.FLAG_COMBAT = 4
 P.FLAG_AFK = 8
 P.FLAG_INSTANCE = 16
+
+-- Info status bits (I message, not S flags: old clients reject S flags > 255).
+P.ST_MOUNTED = 1    -- not sent since 0.4.0 (owner: unnecessary); bit reserved
+P.ST_FLYING = 2
+P.ST_SWIMMING = 4   -- not sent either; bit reserved
+P.ST_TAXI = 8
+P.ST_RESTING = 16
+P.ST_DND = 32
+P.ST_PVP = 64
+
+P.BYE_LOGOUT = 1
+P.BYE_STOPPED = 2
+P.CHAT_MAX = 230   -- bytes of chat text per message (addon messages max out at 255)
 
 function P.HasFlag(flags, bit)
   return math.floor((flags or 0) / bit) % 2 == 1
@@ -73,8 +93,53 @@ function P.EncodeHello(h)
   }, ":")
 end
 
-function P.EncodeBye()
+function P.EncodeBye(reason)
+  if reason and reason ~= P.BYE_LOGOUT then return P.VERSION .. ":B:" .. reason end
   return P.VERSION .. ":B"
+end
+
+-- i: { status, group, instType, subzone, race, guild, home }
+function P.EncodeInfo(i)
+  return table.concat({
+    P.VERSION, "I",
+    enc(int(i.status or 0, 0, 65535)),
+    enc(i.group and int(i.group, 0, 99)),
+    clean(i.instType, 12),
+    clean(i.subzone, 64),
+    clean(i.race, 24),
+    clean(i.guild, 48),
+    clean(i.home, 64),
+  }, ":")
+end
+
+-- Arguments are text or numbers; ':' and '|' are stripped from each.
+function P.EncodeEvent(kind, ...)
+  local out = { P.VERSION, "E", clean(kind, 8) }
+  for i = 1, select("#", ...) do
+    local v = select(i, ...)
+    out[#out + 1] = v == nil and "-" or clean(v, 64)
+  end
+  return table.concat(out, ":")
+end
+
+-- Chat text goes as is (the receiver sanitizes it); only trimmed to CHAT_MAX.
+function P.EncodeChat(text)
+  return P.VERSION .. ":C:" .. (tostring(text or ""):gsub("%c", " ")):sub(1, P.CHAT_MAX)
+end
+
+-- Splits long chat text into CHAT_MAX pieces, at spaces where possible.
+function P.SplitChat(text)
+  local out = {}
+  text = tostring(text or "")
+  while #text > P.CHAT_MAX do
+    local cut = P.CHAT_MAX
+    local space = text:sub(1, P.CHAT_MAX):match(".*() ")
+    if space and space > P.CHAT_MAX / 2 then cut = space - 1 end
+    out[#out + 1] = text:sub(1, cut)
+    text = text:sub(cut + 1):gsub("^ +", "")
+  end
+  if text ~= "" then out[#out + 1] = text end
+  return out
 end
 
 -- Optional number field: "-" -> nil; garbage -> false (reject message).
@@ -111,7 +176,30 @@ function P.Decode(text)
   local kind = f[2]
 
   if kind == "B" then
-    return { type = "B" }
+    return { type = "B", reason = tonumber(f[3]) or P.BYE_LOGOUT }
+
+  elseif kind == "C" then
+    local body = text:match("^%d+:C:(.*)$")
+    if not body or body == "" then return nil end
+    return { type = "C", text = body }
+
+  elseif kind == "E" then
+    f = split(text, ":")
+    if not f[3] or f[3] == "" then return nil end
+    local args = {}
+    for i = 4, #f do
+      if f[i] ~= "-" then args[i - 3] = f[i] end
+    end
+    return { type = "E", kind = f[3], args = args, n = #f - 3 }
+
+  elseif kind == "I" then
+    f = split(text, ":")
+    if #f < 9 then return nil end
+    local status, group = num(f[3], 0, 65535), num(f[4], 0, 99)
+    if status == false or group == false then return nil end
+    local function txt(v) return v ~= "" and v or nil end
+    return { type = "I", status = status or 0, group = group, instType = txt(f[5]), subzone = txt(f[6]),
+      race = txt(f[7]), guild = txt(f[8]), home = txt(f[9]) }
 
   elseif kind == "H" then
     if #f ~= 7 then return nil end

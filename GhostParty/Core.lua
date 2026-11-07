@@ -1,11 +1,13 @@
 local ADDON, ns = ...
 
--- GhostParty: party frames and live map pins for Battle.net friends who are
--- NOT in your group. Every member runs the addon and broadcasts their own
--- state over Battle.net addon messages; nothing is read from other players.
+-- GhostParty (shown in game as "Angura"): a friend roster, party feed, party
+-- chat and live map pins for Battle.net friends who are NOT in your group.
+-- Every member runs the addon and broadcasts their own state over Battle.net
+-- addon messages; nothing is read from other players.
 
-ns.VERSION = "0.3.1"
+ns.VERSION = "0.4.0"
 ns.PROTOCOL = 1
+ns.NAME = "Angura" -- the name players see; the project, folder and saved variables stay GhostParty
 
 local DEFAULTS = {
   members = {},        -- ordered list of BattleTags you share with
@@ -20,6 +22,8 @@ local DEFAULTS = {
   buttonAngle = 215,   -- minimap button position, degrees (0 = east)
   minInterval = 0.5,   -- seconds between state updates to one friend
   debug = false,
+  chatTab = false,     -- the Angura chat tab was opened once (closing it is then the player's choice)
+  signalLog = {},      -- one line per "No signal" gap (Members.lua), read from the saved file
 }
 
 ---------------------------------------------------------------------------
@@ -46,7 +50,7 @@ end)
 ---------------------------------------------------------------------------
 function ns.Print(...)
   local msg = strjoin(" ", tostringall(...))
-  DEFAULT_CHAT_FRAME:AddMessage("|cff9fd8ffGhostParty|r: " .. msg)
+  DEFAULT_CHAT_FRAME:AddMessage("|cff9fd8ff" .. ns.NAME .. "|r: " .. msg)
 end
 
 function ns.Debug(...)
@@ -86,6 +90,8 @@ ns:On("ADDON_LOADED", function(name)
       GhostPartyDB[k] = type(v) == "table" and CopyTable(v) or v
     end
   end
+  -- Left over from the 0.3.x probe.
+  GhostPartyDB.probeWatch, GhostPartyDB.probeLog = nil, nil
   ns.db = GhostPartyDB
 end)
 
@@ -93,19 +99,22 @@ end)
 -- Slash commands
 ---------------------------------------------------------------------------
 local HELP = {
-  "/gp friends - list Battle.net friends online in Forever (numbered)",
-  "/gp add <number | BattleTag | character> - share with a friend",
-  "/gp remove <BattleTag | character> - stop sharing",
-  "/gp list - who you share with, and who is live",
-  "/gp lock | unlock - lock or move the frames",
-  "/gp scale <0.5-2> - frame size",
-  "/gp stop | start - stop / resume sharing your position (also hides map pins)",
-  "/gp frames | pins - toggle party frames / map pins",
-  "/gp button - show or hide the minimap button",
-  "/gp reset - move frames back to the default spot",
-  "/gp sim - add/remove a fake friend for testing",
-  "/gp status - connection and throttle details",
-  "/gp debug - toggle debug messages",
+  "/an <message> - talk to your friends (party chat, no group needed)",
+  "/angura friends - list Battle.net friends online in Forever (numbered)",
+  "/angura add <number | BattleTag | character> - share with a friend",
+  "/angura remove <BattleTag | character> - stop sharing",
+  "/angura list - who you share with, and who is live",
+  "/angura lock | unlock - lock or move the roster",
+  "/angura scale <0.5-2> - roster size",
+  "/angura stop | start - stop / resume sharing (also hides map pins)",
+  "/angura frames | pins - toggle the roster / map pins",
+  "/angura chat - reopen the " .. "Angura chat tab",
+  "/angura button - show or hide the minimap button",
+  "/angura reset - move the roster back to the default spot",
+  "/angura sim - add/remove a fake friend for testing",
+  "/angura status - connection and throttle details",
+  "/angura debug - toggle debug messages",
+  "(/gp works the same as /angura.)",
 }
 
 local commands = {}
@@ -115,15 +124,16 @@ commands.friends = function() ns.Roster:PrintFriends() end
 commands.add = function(arg) ns.Roster:AddMember(arg) end
 commands.remove = function(arg) ns.Roster:RemoveMember(arg) end
 commands.list = function() ns.Roster:PrintMembers() end
-commands.lock = function() ns.db.locked = true; ns.Frames:ApplySettings(); ns.Print("Frames locked.") end
-commands.unlock = function() ns.db.locked = false; ns.Frames:ApplySettings(); ns.Print("Frames unlocked: drag the handle to move them.") end
-commands.reset = function() ns.db.point = nil; ns.Frames:ApplySettings(); ns.Print("Frame position reset.") end
+commands.lock = function() ns.db.locked = true; ns.Frames:ApplySettings(); ns.Print("Roster locked.") end
+commands.unlock = function() ns.db.locked = false; ns.Frames:ApplySettings(); ns.Print("Roster unlocked: drag the handle to move it.") end
+commands.reset = function() ns.db.point = nil; ns.Frames:ApplySettings(); ns.Print("Roster position reset.") end
 commands.sim = function() ns.Sim:Toggle() end
-commands.status = function() ns.Comm:PrintStatus() end
+commands.chat = function() ns.Feed:MakeTab(true) end
+commands.status = function() ns.Comm:PrintStatus(); ns.State:PrintSelf() end
 
 commands.scale = function(arg)
   local s = tonumber(arg)
-  if not s or s < 0.5 or s > 2 then return ns.Print("Usage: /gp scale 0.5-2") end
+  if not s or s < 0.5 or s > 2 then return ns.Print("Usage: /angura scale 0.5-2") end
   ns.db.scale = s
   ns.Frames:ApplySettings()
 end
@@ -132,7 +142,7 @@ end
 function ns.SetFramesShown(show)
   ns.db.showFrames = show
   ns.Frames:ApplySettings()
-  ns.Print("Party frames", show and "shown." or "hidden.",
+  ns.Print("Roster", show and "shown." or "hidden.",
     InCombatLockdown() and "(Applies when combat ends.)" or "")
   if ns.Button then ns.Button:Update() end
 end
@@ -141,17 +151,17 @@ end
 -- stop sending anything, and hide pins on your own maps. Saved across reloads.
 function ns.SetSharing(on)
   if on == ns.db.sharing then
-    return ns.Print(on and "Already sharing." or "Already stopped. /gp start to resume.")
+    return ns.Print(on and "Already sharing." or "Already stopped. /angura start to resume.")
   end
   if on then
     ns.db.sharing = true
     ns.State:SendHello(true)
     ns.Print("Sharing resumed: friends see you again, and map pins are back.")
   else
-    ns.Comm:SendUrgent(ns.Protocol.EncodeBye())
+    ns.Comm:SendUrgent(ns.Protocol.EncodeBye(ns.Protocol.BYE_STOPPED))
     ns.Comm:ClearState()
     ns.db.sharing = false
-    ns.Print("Sharing stopped: friends no longer see you, and map pins are hidden. /gp start to resume.")
+    ns.Print("Sharing stopped: friends no longer see you, and map pins are hidden. /angura start to resume.")
   end
   if ns.Button then ns.Button:Update() end
 end
@@ -162,7 +172,7 @@ commands.start = function() ns.SetSharing(true) end
 commands.button = function()
   ns.db.hideButton = not ns.db.hideButton
   if ns.Button then ns.Button:Update() end
-  ns.Print("Minimap button", ns.db.hideButton and "hidden. /gp button brings it back." or "shown.")
+  ns.Print("Minimap button", ns.db.hideButton and "hidden. /angura button brings it back." or "shown.")
 end
 
 commands.pins = function()
@@ -177,9 +187,14 @@ end
 
 SLASH_GHOSTPARTY1 = "/gp"
 SLASH_GHOSTPARTY2 = "/ghostparty"
+SLASH_GHOSTPARTY3 = "/angura"
 SlashCmdList.GHOSTPARTY = function(input)
   local cmd, arg = (input or ""):match("^%s*(%S*)%s*(.-)%s*$")
   cmd = (cmd or ""):lower()
   local fn = commands[cmd] or commands.help
   fn(arg)
 end
+
+-- Party chat.
+SLASH_GHOSTPARTYCHAT1 = "/an"
+SlashCmdList.GHOSTPARTYCHAT = function(input) ns.Feed:SendChat(input) end

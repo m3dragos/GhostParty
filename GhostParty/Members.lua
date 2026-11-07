@@ -26,9 +26,36 @@ end
 
 function M:Forget(tag) recs[tag] = nil end
 
+---------------------------------------------------------------------------
+-- Presence for the feed: "came online" / "went offline".
+-- r.presence: nil (not known yet), "on", "off". A bye waits a moment before it
+-- counts, because /reload also sends one and says hello again seconds later.
+---------------------------------------------------------------------------
+local BYE_GRACE = 25
+
+local function WentOffline(r)
+  if r.presence == "on" then
+    r.presence = "off"
+    if ns.Feed then ns.Feed:Presence(r, false) end
+  end
+end
+
+-- Any message but a bye. want: their hello asked for ours (they just logged in).
+local function Heard(r, msg)
+  r.byeAt = nil
+  if r.presence == "off" or (r.presence == nil and msg.type == "H" and msg.want) then
+    if ns.Feed then ns.Feed:Presence(r, true) end
+  end
+  r.presence = "on"
+end
+
 function M:MarkOffline(tag)
   local r = recs[tag]
-  if r then r.gone = true; r.live = false; ns.Frames:Refresh() end
+  if r then
+    r.gone = true; r.live = false
+    WentOffline(r)
+    ns.Frames:Refresh()
+  end
 end
 
 -- Members to show, in your list's order (sim member last).
@@ -47,9 +74,13 @@ function M:Visible()
   return out
 end
 
+local function OnInfo(r, m)
+  r.status, r.group, r.instType = m.status, m.group, m.instType
+  r.subzone, r.race, r.guild, r.home = m.subzone, m.race, m.guild, m.home
+  r.hasInfo = true
+end
+
 local function OnState(r, m, now)
-  r.hp, r.hpMax = m.hp or r.hp, m.hpMax or r.hpMax
-  r.pw, r.pwMax, r.pwType = m.pw or r.pw, m.pwMax or r.pwMax, m.pwType or r.pwType
   r.flags = m.flags
   r.speed = m.speed
   r.facing = m.facing
@@ -93,38 +124,87 @@ local function OnState(r, m, now)
   end
 end
 
+-- One saved line per "No signal" gap, written when the friend is heard again,
+-- with what happened meanwhile: GhostPartyDB.signalLog in the SavedVariables file.
+M.gaps = 0
+local MAX_SIGNAL_LOG = 300
+local combatAt = 0 -- last GetTime() we entered or left combat
+ns:On("PLAYER_REGEN_DISABLED", function() combatAt = GetTime() end)
+ns:On("PLAYER_REGEN_ENABLED", function() combatAt = GetTime() end)
+
+local function LogGap(r, msg, via, now)
+  local gap = now - r.heardAt
+  if gap < M.STALE_AFTER or gap >= M.HIDE_AFTER or r.gone then return end
+  local C = ns.Comm
+  local mark = r.mark or {}
+  local P = ns.Protocol
+  local line = ("%s gap %.1fs from %s: back via %s (%s), before via %s; their flags before %s%s;"
+    .. " during gap: unreadable %d, dropped %d, failed sends %d; our lockdown %s, our combat %s"):format(
+    date("%m-%d %H:%M:%S"), gap, r.tag, via or "?", msg.type, r.via or "?",
+    tostring(r.flags or "?"), P.HasFlag(r.flags, P.FLAG_COMBAT) and " (combat)" or "",
+    C.stats.unreadable - (mark.unreadable or 0), C.stats.dropped - (mark.dropped or 0),
+    C.stats.failed - (mark.failed or 0),
+    (C.lockdownSeenAt or 0) > r.heardAt and "seen" or "not seen",
+    (combatAt > r.heardAt or InCombatLockdown()) and "yes" or "no")
+  M.gaps = M.gaps + 1
+  ns.Debug(line)
+  local log = ns.db.signalLog
+  log[#log + 1] = line
+  while #log > MAX_SIGNAL_LOG do table.remove(log, 1) end
+end
+
 -- tag: BattleTag (or the sim's fake tag); msg: decoded protocol message.
-function M:OnMessage(tag, msg, isSim)
+function M:OnMessage(tag, msg, isSim, via)
   if not isSim and not ns.Roster:IsMember(tag) then
     if msg.type == "H" and not noticed[tag] then
       noticed[tag] = true
-      ns.Print(("%s (%s) is sharing with you. Type /gp add %s to see them."):format(tag, msg.name or "?", tag))
+      ns.Print(("%s (%s) is sharing with you. Type /angura add %s to see them."):format(tag, msg.name or "?", tag))
     end
     return
   end
 
   local r = self:Get(tag)
   local now = GetTime()
-  r.heardAt = now
+  if r.heardAt and not isSim then LogGap(r, msg, via, now) end
+  local C = ns.Comm
+  r.heardAt, r.via = now, via
+  r.mark = { unreadable = C.stats.unreadable, dropped = C.stats.dropped, failed = C.stats.failed }
   r.sim = isSim or nil
 
-  if msg.type == "H" then
-    r.gone = false
-    r.name, r.level, r.class, r.zone = msg.name, msg.level, msg.class, msg.zone
-    -- A character to whisper if they later Appear Offline.
-    if not isSim and #ns.Roster:Chars(tag) == 0 then ns.Roster:RememberChar(tag, msg.name) end
-    if msg.want and not isSim then ns.State:SendHello(false, tag) end
-  elseif msg.type == "S" then
-    r.gone = false
-    OnState(r, msg, now)
-  elseif msg.type == "B" then
-    r.gone = true
-  end
-
+  if msg.type == "H" then r.name, r.level, r.class, r.zone = msg.name, msg.level, msg.class, msg.zone end
   -- Name before the first hello: fall back to what Battle.net tells us.
   if not r.name then
     local o = ns.Roster:Online(tag)
     r.name = o and o.name or tag:match("^[^#]+")
+  end
+  if msg.type ~= "B" then
+    r.gone = false
+    Heard(r, msg)
+  end
+
+  if msg.type == "H" then
+    -- A character to whisper if they later Appear Offline.
+    if not isSim and #ns.Roster:Chars(tag) == 0 then ns.Roster:RememberChar(tag, msg.name) end
+    if msg.want and not isSim then ns.State:SendHello(false, tag) end
+  elseif msg.type == "S" then
+    OnState(r, msg, now)
+  elseif msg.type == "I" then
+    OnInfo(r, msg)
+  elseif msg.type == "E" then
+    if ns.Feed then ns.Feed:OnEvent(r, msg) end
+  elseif msg.type == "C" then
+    if ns.Feed then ns.Feed:OnChat(r, msg.text) end
+  elseif msg.type == "B" then
+    r.gone = true
+    if msg.reason == ns.Protocol.BYE_STOPPED then
+      r.presence = nil -- stopped sharing: no "went offline"
+    else
+      local at = now
+      r.byeAt = at
+      C_Timer.After(BYE_GRACE, function()
+        if r.byeAt == at then WentOffline(r) end
+      end)
+    end
   end
   ns.Frames:Refresh()
 end

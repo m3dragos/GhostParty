@@ -1,8 +1,8 @@
 ## Interface: 16001
-## Title: GhostParty
-## Notes: Party frames and live map pins for Battle.net friends, without being in a group.
+## Title: Angura
+## Notes: Friend roster, party feed, party chat and live map pins for Battle.net friends, without being in a group. (Project: GhostParty)
 ## Author: Dragos
-## Version: 0.3.1
+## Version: 0.4.0
 ## SavedVariables: GhostPartyDB
 
 Core.lua
@@ -11,6 +11,7 @@ Roster.lua
 Comm.lua
 State.lua
 Members.lua
+Feed.lua
 Frames.lua
 Pins.lua
 Sim.lua

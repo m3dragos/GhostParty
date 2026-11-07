@@ -1,8 +1,11 @@
 local _, ns = ...
 
 -- Samples YOUR character and decides when to broadcast it.
--- Sends when you move a few yards, start/stop moving, turn, or your
--- health/power/status changes, plus a heartbeat so friends know you're live.
+-- State (S): sent when you move a few yards, start/stop moving, turn, or your
+-- flags change, plus a heartbeat so friends know you're live.
+-- Info (I): statuses and tooltip details, sent when they change (checked once
+-- a second, at most every few seconds) and with every hello.
+-- Health and power are not sent: they are always secret on Forever.
 local S = {}
 ns.State = S
 
@@ -14,9 +17,13 @@ local MOVE_YARDS = 2.5
 local TURN_DEGREES = 25
 local HEARTBEAT = 4
 local HELLO_EVERY = 30
+local INFO_CHECK = 1      -- seconds between info samples
+local INFO_MIN_GAP = 3    -- seconds between info sends (statuses settle first)
 
 local last          -- last state sent
 local lastSentAt = 0
+local lastInfo      -- last info text sent
+local lastInfoAt, lastInfoCheck = 0, 0
 
 local function MapSize(mapID)
   if not (C_Map and C_Map.GetMapWorldSize) then return nil end
@@ -39,12 +46,6 @@ function S:Sample()
   s.facing = Call(GetPlayerFacing)
   s.speed = Call(GetUnitSpeed, "player")
 
-  -- Health and power can be secret in combat on Forever: then they're nil
-  -- and friends keep showing the last known value.
-  s.hp, s.hpMax = Call(UnitHealth, "player"), Call(UnitHealthMax, "player")
-  s.pwType = Call(UnitPowerType, "player")
-  s.pw, s.pwMax = Call(UnitPower, "player"), Call(UnitPowerMax, "player")
-
   local f = 0
   if Call(UnitIsGhost, "player") then f = f + P.FLAG_GHOST
   elseif Call(UnitIsDead, "player") then f = f + P.FLAG_DEAD end
@@ -54,6 +55,33 @@ function S:Sample()
   s.flags = f
   return s
 end
+
+function S:SampleInfo()
+  local st = 0
+  local function bit(on, b) if on then st = st + b end end
+  -- Mounted and swimming aren't sent (owner: unnecessary): fewer info updates too.
+  bit(Call(IsFlying), P.ST_FLYING)
+  bit(Call(UnitOnTaxi, "player"), P.ST_TAXI)
+  bit(Call(IsResting), P.ST_RESTING)
+  bit(Call(UnitIsDND, "player"), P.ST_DND)
+  bit(Call(UnitIsPVP, "player"), P.ST_PVP)
+  local instType
+  if Call(IsInInstance) then
+    local _, kind = Call(GetInstanceInfo)
+    if kind and kind ~= "none" then instType = kind end
+  end
+  return {
+    status = st,
+    group = Call(GetNumGroupMembers) or 0,
+    instType = instType,
+    subzone = Call(GetSubZoneText),
+    race = Call(UnitRace, "player"),
+    guild = Call(GetGuildInfo, "player"),
+    home = Call(GetBindLocation),
+  }
+end
+
+function S:InfoText() return P.EncodeInfo(self:SampleInfo()) end
 
 local function Moved(a, b)
   if a.map ~= b.map or (a.x == nil) ~= (b.x == nil) then return true end
@@ -75,25 +103,29 @@ local function StartedOrStopped(a, b)
   return ((a.speed or 0) > 0) ~= ((b.speed or 0) > 0)
 end
 
-local function StatsChanged(a, b)
-  return a.hp ~= b.hp or a.hpMax ~= b.hpMax or a.pw ~= b.pw or a.pwMax ~= b.pwMax
-    or a.pwType ~= b.pwType or a.flags ~= b.flags
-end
-
 function S:Tick()
   if not ns.db.sharing or not ns.Comm:HasTargets() then return end
   local s = self:Sample()
   local now = GetTime()
-  local changed = not last or Moved(s, last) or Turned(s, last) or StartedOrStopped(s, last) or StatsChanged(s, last)
+  local changed = not last or Moved(s, last) or Turned(s, last) or StartedOrStopped(s, last) or s.flags ~= last.flags
   if changed or now - lastSentAt >= HEARTBEAT then
-    -- Keep last known stats rather than sending "unknown" every tick in combat.
-    if last then
-      if s.hp == nil then s.hp, s.hpMax = last.hp, last.hpMax end
-      if s.pw == nil then s.pw, s.pwMax, s.pwType = last.pw, last.pwMax, last.pwType end
-    end
     ns.Comm:SendState(P.EncodeState(s))
     last, lastSentAt = s, now
   end
+
+  if now - lastInfoCheck >= INFO_CHECK and now - lastInfoAt >= INFO_MIN_GAP then
+    lastInfoCheck = now
+    local text = self:InfoText()
+    if text ~= lastInfo then
+      ns.Comm:SendInfo(text)
+      lastInfo, lastInfoAt = text, now
+    end
+  end
+end
+
+function S:PrintSelf()
+  ns.Print("Last state sent: " .. (last and P.EncodeState(last) or "nothing yet"))
+  ns.Print("Last info sent: " .. (lastInfo or "nothing yet"))
 end
 
 function S:HelloText(want)
@@ -110,8 +142,17 @@ end
 function S:SendHello(want, tag)
   if not ns.db.sharing then return end
   ns.Comm:SendUrgent(self:HelloText(want), tag)
-  -- Make sure whoever we greet also gets a full state soon.
+  -- Make sure whoever we greet also gets a full state and info soon.
   lastSentAt = 0
+  local text = self:InfoText()
+  ns.Comm:SendInfo(text, tag)
+  if not tag then lastInfo, lastInfoAt = text, GetTime() end
+end
+
+-- Feed events go through the urgent queue, held during boss encounters.
+function S:SendEvent(kind, ...)
+  if not ns.db.sharing or not ns.Comm:HasTargets() then return end
+  ns.Comm:SendUrgent(P.EncodeEvent(kind, ...), nil, true)
 end
 
 ns:On("PLAYER_LOGIN", function()
@@ -128,7 +169,7 @@ ns:On("PLAYER_LOGIN", function()
   end)
   if not ns.db.sharing then
     C_Timer.After(6, function()
-      ns.Print("Sharing is stopped: friends can't see you. /gp start to resume.")
+      ns.Print("Sharing is stopped: friends can't see you. /angura start to resume.")
     end)
   end
 end)
@@ -136,5 +177,5 @@ end)
 ns:On("PLAYER_LEVEL_UP", function() C_Timer.After(1, function() S:SendHello(false) end) end)
 ns:On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1, function() S:SendHello(false) end) end)
 ns:On("PLAYER_LOGOUT", function()
-  if ns.db.sharing then ns.Comm:SendNow(ns.Protocol.EncodeBye()) end
+  if ns.db.sharing then ns.Comm:SendNow(ns.Protocol.EncodeBye(P.BYE_LOGOUT)) end
 end)

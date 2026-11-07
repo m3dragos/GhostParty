@@ -9,7 +9,7 @@ ns.Roster = R
 local online = {}     -- battleTag -> { gameAccountID, name, level, className, area, accountName }
 local byGameID = {}   -- gameAccountID -> battleTag
 local elsewhere = {}  -- battleTag -> true: visible on Battle.net, but not in any WoW client
-local lastListing = {} -- index -> battleTag, from the last /gp friends
+local lastListing = {} -- index -> battleTag, from the last /angura friends
 
 -- On Forever the client reports WOW_PROJECT_ID 1 (like Retail), but Battle.net
 -- labels Forever as its own project. Compare against our own Battle.net entry.
@@ -207,7 +207,7 @@ function R:OnlineMembers()
   return out
 end
 
--- Accepts a number from /gp friends, a BattleTag, or a character name.
+-- Accepts a number from /angura friends, a BattleTag, or a character name.
 local function Resolve(arg)
   arg = arg and strtrim(arg) or ""
   if arg == "" then return nil end
@@ -234,11 +234,11 @@ function R:AddMember(arg)
   self:Scan()
   local tag = Resolve(arg)
   if not tag then
-    return ns.Print("Couldn't find that friend. Use /gp friends, then /gp add <number>.")
+    return ns.Print("Couldn't find that friend. Use /angura friends, then /angura add <number>.")
   end
-  if self:IsMember(tag) then return ns.Print(tag, "is already in your ghost party.") end
+  if self:IsMember(tag) then return ns.Print(tag, "is already in your Angura list.") end
   table.insert(ns.db.members, tag)
-  ns.Print("Added", tag .. ". They need GhostParty too, and need to add you back.")
+  ns.Print("Added", tag .. ". They need Angura (GhostParty) too, and need to add you back.")
   if online[tag] then ns.State:SendHello(true, tag) end
   ns.Frames:Refresh()
 end
@@ -254,7 +254,7 @@ function R:RemoveMember(arg)
       return
     end
   end
-  ns.Print("They aren't in your ghost party. /gp list shows who is.")
+  ns.Print("They aren't in your Angura list. /angura list shows who is.")
 end
 
 function R:PrintFriends()
@@ -271,20 +271,20 @@ function R:PrintFriends()
     ns.Print(("  %d. %s - %s (level %s %s, %s)%s"):format(i, tag, o.name, tostring(o.level or "?"),
       o.className or "?", o.area or "?", self:IsMember(tag) and "  |cff55ff55[in party]|r" or ""))
   end
-  ns.Print("Add one with /gp add <number>.")
+  ns.Print("Add one with /angura add <number>.")
 end
 
 function R:PrintMembers()
   self:Scan()
-  if #ns.db.members == 0 then return ns.Print("Nobody yet. /gp friends, then /gp add <number>.") end
-  ns.Print("Your ghost party:")
+  if #ns.db.members == 0 then return ns.Print("Nobody yet. /angura friends, then /angura add <number>.") end
+  ns.Print("Your Angura friends:")
   for _, tag in ipairs(ns.db.members) do
     local o = online[tag]
     local m = ns.Members:Get(tag, true)
     local state
     local kind = self:Route(tag)
     if m and m.live then state = "|cff55ff55live|r" .. (kind == "WHISPER" and " (via whisper: Appear Offline)" or "")
-    elseif o then state = "|cffffd100online, no GhostParty data yet|r"
+    elseif o then state = "|cffffd100online, no Angura data yet|r"
     else state = "|cff888888offline|r" end
     ns.Print(("  %s%s - %s"):format(tag, o and (" (" .. o.name .. ")") or "", state))
   end

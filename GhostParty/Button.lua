@@ -1,6 +1,6 @@
 local _, ns = ...
 
--- Minimap button: left-click shows/hides the party frames, right-click
+-- Minimap button: left-click shows/hides the roster, right-click
 -- stops/starts sharing, drag to move it around the minimap's edge.
 local B = {}
 ns.Button = B
@@ -25,15 +25,15 @@ end
 
 local function ShowTooltip(self)
   GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-  GameTooltip:SetText("GhostParty", 0.62, 0.85, 1)
+  GameTooltip:SetText(ns.NAME, 0.62, 0.85, 1)
   if ns.db.sharing then
     GameTooltip:AddLine("Sharing your position", 0.3, 1, 0.3)
   else
     GameTooltip:AddLine("Sharing stopped", 1, 0.3, 0.3)
   end
-  GameTooltip:AddLine(ns.db.showFrames and "Party frames shown" or "Party frames hidden", 1, 1, 1)
+  GameTooltip:AddLine(ns.db.showFrames and "Roster shown" or "Roster hidden", 1, 1, 1)
   GameTooltip:AddLine(" ")
-  GameTooltip:AddDoubleLine("Left-click", ns.db.showFrames and "Hide frames" or "Show frames", 1, 1, 1, 1, 0.82, 0)
+  GameTooltip:AddDoubleLine("Left-click", ns.db.showFrames and "Hide roster" or "Show roster", 1, 1, 1, 1, 0.82, 0)
   GameTooltip:AddDoubleLine("Right-click", ns.db.sharing and "Stop sharing" or "Start sharing", 1, 1, 1, 1, 0.82, 0)
   GameTooltip:AddDoubleLine("Drag", "Move button", 1, 1, 1, 1, 0.82, 0)
   GameTooltip:Show()

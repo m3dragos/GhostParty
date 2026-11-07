@@ -1,141 +1,277 @@
 local _, ns = ...
 
--- Party-style frames. Uses the game's own party frame art (the 12.x atlas
--- frame when the client has it, otherwise vanilla's UI-PartyFrame).
+-- The friend roster: one row per friend, in WoW's tooltip style.
+--   [class icon] Name                    [status icons]  [+ / -]
+--                Zone, Subzone                   180 yd  [find]
 --
--- Each slot is two layers:
+-- Each slot is three layers:
 --   visual  - plain frame, freely updated any time (also in combat)
---   click   - secure button that /targets the friend; only changed out of combat
+--   click   - secure button over the row that /targets the friend; only
+--             changed out of combat, and anchored to the anchor (never to the
+--             visual, which must stay free to change)
+--   buttons - insecure Invite / Uninvite / Find on top of the click layer
+--             (C_PartyInfo and waypoints aren't protected, so they work in combat)
 local F = {}
 ns.Frames = F
 
 local P = ns.Protocol
-local SPACING = 12 -- room for the zone/distance line under each frame
+local Call = ns.Call
 
--- Geometry from the stock frames, in frame units from the top-left (y down).
-local KITS = {
-  modern = {
-    w = 120, h = 49,
-    art = { atlas = "UI-HUD-UnitFrame-Party-PortraitOn", x = 0, y = 0, w = 120, h = 49 },
-    combat = { atlas = "ui-hud-unitframe-party-portraiton-incombat", x = 0, y = 0, w = 114, h = 47 },
-    portrait = { x = 6, y = 4, s = 37 },
-    health = { x = 44, y = 17, w = 70, h = 10, mask = "UI-HUD-UnitFrame-Party-PortraitOn-Bar-Health-Mask", mx = -29, my = 3 },
-    power = { x = 40, y = 28, w = 74, h = 7, mask = "UI-HUD-UnitFrame-Party-PortraitOn-Bar-Mana-Mask", mx = -27, my = 4 },
-    name = { x = 45, y = 4, w = 57, h = 12 },
-    artAbove = false,
-    subY = 3,  -- location line offset from the frame's bottom (up = positive)
-  },
-  classic = {
-    w = 128, h = 53,
-    art = { file = "Interface\\TargetingFrame\\UI-PartyFrame", x = 0, y = -1, w = 128, h = 64 },
-    combat = { file = "Interface\\TargetingFrame\\UI-PartyFrame-Flash", x = -3, y = -5, w = 128, h = 64 },
-    portrait = { x = 7, y = 4, s = 37 },
-    health = { x = 47, y = 10, w = 70, h = 8 },
-    power = { x = 47, y = 19, w = 70, h = 8 },
-    name = { x = 50, y = -9, w = 60, h = 12 },
-    artAbove = true,
-    subY = 5,
-  },
-}
+local W, H, GAP = 236, 38, 2
+local ICON = 28
+local STATUS_SIZE = 14
 
-local function AtlasExists(name)
-  return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) ~= nil
-end
-
-local kit
 local anchor, handle
 local slots = {}
 local assigned = {}   -- slot index -> tag
 local pendingSecure = false
 
-local function Place(region, parent, g)
-  region:ClearAllPoints()
-  region:SetPoint("TOPLEFT", parent, "TOPLEFT", g.x, -g.y)
-  if g.w then region:SetSize(g.w, g.h) end
+local function AtlasExists(name)
+  return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) ~= nil
 end
 
-local function SetArt(tex, g)
-  if g.atlas then tex:SetAtlas(g.atlas) else tex:SetTexture(g.file) end
-end
+---------------------------------------------------------------------------
+-- Status icons, in display order. test(r) says whether it shows.
+---------------------------------------------------------------------------
+local function St(r, bit) return P.HasFlag(r.status, bit) end
+local function Fl(r, bit) return P.HasFlag(r.flags, bit) end
+local ICON_CROP = { 0.08, 0.92, 0.08, 0.92 }
 
-local function MakeBar(parent, g, color)
-  local bar = CreateFrame("StatusBar", nil, parent)
-  Place(bar, parent, g)
-  bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-  bar:SetStatusBarColor(unpack(color))
-  bar:SetMinMaxValues(0, 1)
-  bar:SetValue(1)
-  local bg = bar:CreateTexture(nil, "BACKGROUND")
-  bg:SetAllPoints()
-  bg:SetColorTexture(0, 0, 0, 0.55)
-  if g.mask and AtlasExists(g.mask) then
-    local m = bar:CreateMaskTexture()
-    m:SetAtlas(g.mask)
-    m:SetSize(128, 16)
-    m:SetPoint("TOPLEFT", bar, "TOPLEFT", g.mx, g.my)
-    bar:GetStatusBarTexture():AddMaskTexture(m)
-    bg:AddMaskTexture(m)
+local STATUSES = {
+  { key = "combat", label = "In combat", file = "Interface\\CharacterFrame\\UI-StateIcon", coords = { 0.5, 1, 0, 0.5 },
+    test = function(r) return Fl(r, P.FLAG_COMBAT) end },
+  { key = "ghost", label = "Ghost", atlas = "poi-graveyard-neutral", test = function(r) return Fl(r, P.FLAG_GHOST) end },
+  { key = "dead", label = "Dead", file = "Interface\\TargetingFrame\\UI-TargetingFrame-Skull",
+    test = function(r) return Fl(r, P.FLAG_DEAD) end },
+  { key = "afk", label = "Away", file = "Interface\\FriendsFrame\\StatusIcon-Away", test = function(r) return Fl(r, P.FLAG_AFK) end },
+  { key = "dnd", label = "Do not disturb", file = "Interface\\FriendsFrame\\StatusIcon-DnD",
+    test = function(r) return St(r, P.ST_DND) end },
+  { key = "raid", label = "In a raid", atlas = "Raid", test = function(r) return r.instType == "raid" end },
+  { key = "dungeon", label = "In a dungeon", atlas = "Dungeon",
+    test = function(r) return Fl(r, P.FLAG_INSTANCE) and (r.instType == "party" or r.instType == "scenario" or not r.instType) end },
+  { key = "bg", label = "In a battleground", file = "Interface\\TargetingFrame\\UI-PVP-FFA", coords = { 0, 0.62, 0, 0.62 },
+    test = function(r) return r.instType == "pvp" or r.instType == "arena" end },
+  { key = "taxi", label = "On a flight", file = "Interface\\Icons\\Ability_Mount_Wyvern_01", coords = ICON_CROP,
+    test = function(r) return St(r, P.ST_TAXI) or St(r, P.ST_FLYING) end },
+  { key = "resting", label = "Resting", file = "Interface\\CharacterFrame\\UI-StateIcon", coords = { 0, 0.5, 0, 0.5 },
+    test = function(r) return St(r, P.ST_RESTING) end },
+  { key = "group", label = "In a group", atlas = "socialqueuing-icon-group",
+    test = function(r) return (r.group or 0) > 1 end },
+  { key = "pvp", label = "PvP flagged", file = "Interface\\TargetingFrame\\UI-PVP-FFA", coords = { 0, 0.62, 0, 0.62 },
+    test = function(r) return St(r, P.ST_PVP) and not (r.instType == "pvp" or r.instType == "arena") end },
+}
+
+local function SetIcon(tex, spec)
+  if spec.atlas and AtlasExists(spec.atlas) then
+    tex:SetAtlas(spec.atlas)
+    tex:SetTexCoord(0, 1, 0, 1)
+  else
+    tex:SetTexture(spec.file or "Interface\\Icons\\INV_Misc_QuestionMark")
+    local c = spec.coords
+    if c then tex:SetTexCoord(c[1], c[2], c[3], c[4]) else tex:SetTexCoord(0, 1, 0, 1) end
   end
-  bar.text = bar:CreateFontString(nil, "OVERLAY", "TextStatusBarText")
-  bar.text:SetPoint("CENTER", 0, 0)
-  bar.text:SetScale(0.85)
-  return bar
 end
 
--- One column growing downward, however many friends there are.
+---------------------------------------------------------------------------
+-- Actions (insecure)
+---------------------------------------------------------------------------
+local function FullName(r)
+  return ns.Roster:Chars(r.tag)[1] or r.name
+end
+
+local function Invite(r)
+  local f = C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit
+  if f and r.name then pcall(f, FullName(r)) end
+end
+
+local function Uninvite(r)
+  local f = C_PartyInfo and C_PartyInfo.UninviteUnit or UninviteUnit
+  if f and r.name then pcall(f, FullName(r)) end
+end
+
+-- Find: Blizzard's own map pin and on-screen arrow at the friend's position,
+-- moved every few seconds while you're still tracking them.
+local findTag
+local FIND_REFRESH = 3
+
+local function CanFind(r)
+  return r.pos and not P.HasFlag(r.flags, P.FLAG_INSTANCE) and C_Map and C_Map.SetUserWaypoint
+end
+
+local function PlaceWaypoint(r)
+  local map, x, y = ns.Members:Position(r, GetTime())
+  if not map then return false end
+  if C_Map.CanSetUserWaypointOnMap and not Call(C_Map.CanSetUserWaypointOnMap, map) then
+    local mine = ns.Geo.Player()
+    if not mine then return false end
+    local mx, my = ns.Geo.ToMap(map, x, y, mine)
+    if not (mx and my and mx >= 0 and mx <= 1 and my >= 0 and my <= 1) then return false end
+    map, x, y = mine, mx, my
+  end
+  local point = UiMapPoint and UiMapPoint.CreateFromCoordinates and UiMapPoint.CreateFromCoordinates(map, x, y)
+    or { uiMapID = map, position = CreateVector2D(x, y) }
+  local ok = pcall(C_Map.SetUserWaypoint, point)
+  if ok and C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
+    pcall(C_SuperTrack.SetSuperTrackedUserWaypoint, true)
+  end
+  return ok
+end
+
+local function StopFinding()
+  findTag = nil
+  if C_Map and C_Map.ClearUserWaypoint then pcall(C_Map.ClearUserWaypoint) end
+end
+
+local function Find(r)
+  if findTag == r.tag then
+    StopFinding()
+    return ns.Print("Stopped finding " .. (r.name or r.tag) .. ".")
+  end
+  if not CanFind(r) then return ns.Print((r.name or r.tag) .. " can't be found on the map right now.") end
+  if PlaceWaypoint(r) then
+    findTag = r.tag
+    ns.Print("Finding " .. (r.name or r.tag) .. ": follow the arrow. Click the pin button again to stop.")
+  else
+    ns.Print("The map won't take a waypoint there.")
+  end
+end
+
+local function StillFinding()
+  if not findTag then return false end
+  local hasPoint = C_Map.HasUserWaypoint and Call(C_Map.HasUserWaypoint)
+  local tracked = not C_SuperTrack or not C_SuperTrack.IsSuperTrackingUserWaypoint
+    or Call(C_SuperTrack.IsSuperTrackingUserWaypoint)
+  if not (hasPoint and tracked) then findTag = nil end
+  return findTag ~= nil
+end
+
+---------------------------------------------------------------------------
+-- Tooltip
+---------------------------------------------------------------------------
+local function ShowTooltip(owner, r)
+  if not r then return end
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  GameTooltip:SetText(r.name or r.tag, ns.ClassColor(r.class))
+  GameTooltip:AddLine(r.tag, 0.7, 0.7, 0.7)
+  if r.guild then GameTooltip:AddLine("<" .. r.guild .. ">", 0.25, 1, 0.25) end
+  if r.level then
+    local className = r.class and LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[r.class] or r.class or ""
+    GameTooltip:AddLine(("Level %d %s%s"):format(r.level, r.race and (r.race .. " ") or "", className), 1, 1, 1)
+  end
+  local where = r.zone or ""
+  if r.subzone and r.subzone ~= r.zone then where = (where ~= "" and (r.subzone .. ", " .. where)) or r.subzone end
+  if where ~= "" then GameTooltip:AddLine(where, 1, 0.82, 0) end
+  local yards = ns.Geo and ns.Geo.DistanceTo(r)
+  if yards then GameTooltip:AddLine(("%d yards away"):format(yards), 1, 1, 1) end
+  for _, s in ipairs(STATUSES) do
+    if s.test(r) then
+      local label = s.label
+      if s.key == "group" then label = ("In a group of %d"):format(r.group) end
+      GameTooltip:AddLine(label, 0.8, 0.8, 0.8)
+    end
+  end
+  if r.home then GameTooltip:AddLine("Home: " .. r.home, 0.6, 0.6, 0.6) end
+  local age = r.heardAt and GetTime() - r.heardAt
+  if age and age > 3 then GameTooltip:AddLine(("Last update %ds ago"):format(age), 0.6, 0.6, 0.6) end
+  if not r.hasInfo and not r.sim then GameTooltip:AddLine("Older version: no statuses or news", 1, 0.5, 0.25) end
+  if not r.sim then GameTooltip:AddLine("Click: target (when nearby)", 0.4, 0.8, 1) end
+  GameTooltip:Show()
+end
+
+local function ButtonTooltip(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:SetText(self.tip, 1, 1, 1)
+  GameTooltip:Show()
+end
+
+---------------------------------------------------------------------------
+-- Building
+---------------------------------------------------------------------------
 local function PlaceSlot(frame, i)
   frame:ClearAllPoints()
-  frame:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -(i - 1) * (kit.h + SPACING))
+  frame:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -(i - 1) * (H + GAP))
+end
+
+local function SmallButton(parent, tip, onClick)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetSize(16, 16)
+  b:SetFrameLevel(parent:GetFrameLevel() + 5) -- above the secure click layer
+  b.tip = tip
+  b:SetScript("OnEnter", ButtonTooltip)
+  b:SetScript("OnLeave", GameTooltip_Hide)
+  b:SetScript("OnClick", function(self) if self.rec then onClick(self.rec) end end)
+  return b
 end
 
 local function BuildVisual(i)
-  local v = CreateFrame("Frame", nil, anchor)
-  v:SetSize(kit.w, kit.h)
+  local v = CreateFrame("Frame", nil, anchor, "BackdropTemplate")
+  v:SetSize(W, H)
   PlaceSlot(v, i)
+  v:SetFrameLevel(anchor:GetFrameLevel() + 1)
+  v:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+  })
+  v:SetBackdropColor(0.05, 0.05, 0.08, 0.85)
+  v:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
 
-  v.portrait = v:CreateTexture(nil, "BACKGROUND", nil, 1)
-  Place(v.portrait, v, { x = kit.portrait.x, y = kit.portrait.y, w = kit.portrait.s, h = kit.portrait.s })
+  v.icon = v:CreateTexture(nil, "ARTWORK")
+  v.icon:SetSize(ICON, ICON)
+  v.icon:SetPoint("LEFT", v, "LEFT", 5, 0)
 
-  v.health = MakeBar(v, kit.health, { 0, 0.8, 0 })
-  v.power = MakeBar(v, kit.power, { 0, 0, 1 })
-
-  -- Modern art sits under the bars; vanilla art is drawn over them.
-  local artHost = v
-  if kit.artAbove then
-    artHost = CreateFrame("Frame", nil, v)
-    artHost:SetAllPoints()
-    artHost:SetFrameLevel(v.health:GetFrameLevel() + 2)
-  end
-  v.art = artHost:CreateTexture(nil, kit.artAbove and "ARTWORK" or "BORDER")
-  SetArt(v.art, kit.art)
-  Place(v.art, v, kit.art)
-
-  v.combat = artHost:CreateTexture(nil, "OVERLAY")
-  SetArt(v.combat, kit.combat)
-  Place(v.combat, v, kit.combat)
-  v.combat:SetVertexColor(1, 0.1, 0.1)
-  v.combat:SetBlendMode("ADD")
-  v.combat:Hide()
-
-  local textHost = CreateFrame("Frame", nil, v)
-  textHost:SetAllPoints()
-  textHost:SetFrameLevel(v.health:GetFrameLevel() + 3)
-
-  v.name = textHost:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  Place(v.name, v, kit.name)
-  v.name:SetJustifyH("LEFT")
-
-  v.level = textHost:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  v.level:SetPoint("BOTTOMLEFT", v.portrait, "BOTTOMLEFT", -2, -2)
+  v.level = v:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  v.level:SetPoint("BOTTOMLEFT", v.icon, "BOTTOMLEFT", -2, -2)
   v.level:SetFont(v.level:GetFont(), 9, "OUTLINE")
 
-  v.status = textHost:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  v.status:SetPoint("CENTER", v.health, "CENTER")
+  -- Right column: Invite/Uninvite on top, Find below.
+  v.invite = SmallButton(v, "Invite to your group", Invite)
+  v.invite:SetPoint("TOPRIGHT", v, "TOPRIGHT", -4, -3)
+  v.invite:SetNormalTexture("Interface\\Buttons\\UI-PlusButton-Up")
+  v.invite:SetPushedTexture("Interface\\Buttons\\UI-PlusButton-Down")
+  v.invite:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight", "ADD")
 
-  v.sub = textHost:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  -- Full width of the frame, tucked right under the art.
-  v.sub:SetPoint("TOPLEFT", v, "BOTTOMLEFT", kit.portrait.x, kit.subY)
-  v.sub:SetPoint("TOPRIGHT", v, "BOTTOMRIGHT", -4, kit.subY)
+  v.uninvite = SmallButton(v, "Remove from your group", Uninvite)
+  v.uninvite:SetPoint("TOPRIGHT", v, "TOPRIGHT", -4, -3)
+  v.uninvite:SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up")
+  v.uninvite:SetPushedTexture("Interface\\Buttons\\UI-MinusButton-Down")
+  v.uninvite:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight", "ADD")
+
+  v.find = SmallButton(v, "Find: map pin and arrow to them (click again to stop)", Find)
+  v.find:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -4, 3)
+  local pin = v.find:CreateTexture(nil, "ARTWORK")
+  pin:SetAllPoints()
+  SetIcon(pin, { atlas = "Waypoint-MapPin-Untracked", file = "Interface\\Minimap\\Tracking\\None" })
+  v.find.pin = pin
+  v.find:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+  local right = -24
+  v.name = v:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  v.name:SetPoint("TOPLEFT", v, "TOPLEFT", 5 + ICON + 6, -4)
+  v.name:SetPoint("TOPRIGHT", v, "TOPRIGHT", right, -4)
+  v.name:SetJustifyH("LEFT")
+  v.name:SetWordWrap(false)
+
+  v.statuses = {}
+  for k = 1, 6 do
+    local t = v:CreateTexture(nil, "OVERLAY")
+    t:SetSize(STATUS_SIZE, STATUS_SIZE)
+    if k == 1 then t:SetPoint("TOPRIGHT", v, "TOPRIGHT", right, -5)
+    else t:SetPoint("RIGHT", v.statuses[k - 1], "LEFT", -1, 0) end
+    t:Hide()
+    v.statuses[k] = t
+  end
+  v.groupCount = v:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  v.groupCount:SetFont(v.groupCount:GetFont(), 8, "OUTLINE")
+
+  v.dist = v:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  v.dist:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", right, 5)
+  v.dist:SetJustifyH("RIGHT")
+
+  v.sub = v:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  v.sub:SetPoint("BOTTOMLEFT", v.icon, "BOTTOMRIGHT", 6, 0)
+  v.sub:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", right - 46, 5) -- 46: room for "1234 yd"
   v.sub:SetJustifyH("LEFT")
   v.sub:SetWordWrap(false)
 
@@ -143,42 +279,14 @@ local function BuildVisual(i)
   return v
 end
 
-local function ShowTooltip(owner, r)
-  if not r then return end
-  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-  GameTooltip:SetText(r.name or r.tag, ns.ClassColor(r.class))
-  GameTooltip:AddLine(r.tag, 0.7, 0.7, 0.7)
-  if r.level then
-    local className = r.class and LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[r.class] or r.class or ""
-    GameTooltip:AddLine(("Level %d %s"):format(r.level, className), 1, 1, 1)
-  end
-  if r.zone and r.zone ~= "" then GameTooltip:AddLine(r.zone, 1, 0.82, 0) end
-  local yards = ns.Geo and ns.Geo.DistanceTo(r)
-  if yards then GameTooltip:AddLine(("%d yards away"):format(yards), 1, 1, 1) end
-  local age = r.heardAt and GetTime() - r.heardAt
-  if age and age > 3 then GameTooltip:AddLine(("Last update %ds ago"):format(age), 0.6, 0.6, 0.6) end
-  if not r.sim then
-    GameTooltip:AddLine("Left-click: target (when nearby)", 0.4, 0.8, 1)
-    if ns.Geo and ns.Geo.InMyGroup(r) then
-      GameTooltip:AddLine("In your group", 0.6, 0.6, 0.6)
-    else
-      GameTooltip:AddLine("Right-click: invite to group", 0.4, 0.8, 1)
-    end
-  end
-  GameTooltip:Show()
-end
-
 local function BuildClick(i)
   local b = CreateFrame("Button", "GhostPartySlot" .. i, anchor, "SecureActionButtonTemplate")
-  -- Anchored to the anchor, not the visual: a frame a secure button is anchored
-  -- to gets restricted in combat, and the visual must stay free to change.
-  b:SetSize(kit.w, kit.h)
+  b:SetSize(W, H)
   PlaceSlot(b, i)
+  b:SetFrameLevel(anchor:GetFrameLevel() + 2)
   b:RegisterForClicks("AnyUp", "AnyDown")
   b:SetAttribute("type1", "macro")
   b:SetAttribute("macrotext1", "")
-  b:SetAttribute("type2", "macro")
-  b:SetAttribute("macrotext2", "")
   b:SetScript("OnEnter", function(self) ShowTooltip(self, ns.Members:Get(assigned[i] or "", true)) end)
   b:SetScript("OnLeave", GameTooltip_Hide)
   b:Hide()
@@ -197,21 +305,25 @@ local function ApplyAnchor()
 end
 
 local function Build()
-  kit = AtlasExists(KITS.modern.art.atlas) and KITS.modern or KITS.classic
   anchor = CreateFrame("Frame", "GhostPartyAnchor", UIParent)
-  anchor:SetSize(kit.w, kit.h)
+  anchor:SetSize(W, H)
   anchor:SetMovable(true)
   anchor:SetClampedToScreen(true)
 
   handle = CreateFrame("Frame", nil, anchor, "BackdropTemplate")
   handle:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 2)
-  handle:SetSize(kit.w, 16)
-  handle:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-  handle:SetBackdropColor(0.1, 0.4, 0.7, 0.8)
-  handle:SetBackdropBorderColor(0, 0, 0, 1)
-  local label = handle:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  handle:SetSize(W, 18)
+  handle:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 10,
+    insets = { left = 2, right = 2, top = 2, bottom = 2 },
+  })
+  handle:SetBackdropColor(0.15, 0.1, 0.02, 0.9)
+  handle:SetBackdropBorderColor(1, 0.82, 0, 1)
+  local label = handle:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   label:SetPoint("CENTER")
-  label:SetText("GhostParty - drag, /gp lock")
+  label:SetText(ns.NAME .. " - drag to move, /angura lock")
   handle:EnableMouse(true)
   handle:RegisterForDrag("LeftButton")
   handle:SetScript("OnDragStart", function()
@@ -246,7 +358,6 @@ function F:ApplySettings()
     return
   end
   ApplyAnchor()
-  -- Re-place every slot (also covers slots made while in combat).
   for i, s in pairs(slots) do
     PlaceSlot(s.visual, i)
     if s.click then PlaceSlot(s.click, i) end
@@ -268,17 +379,25 @@ local function UpdateSecure()
     local r = assigned[i] and ns.Members:Get(assigned[i], true)
     local real = r and not r.sim and r.name
     local target = real and ("/target " .. r.name) or ""
-    -- Right-click invites, unless they're already in your group.
-    local invite = (real and not (ns.Geo and ns.Geo.InMyGroup(r))) and ("/invite " .. r.name) or ""
     if s.click:GetAttribute("macrotext1") ~= target then s.click:SetAttribute("macrotext1", target) end
-    if s.click:GetAttribute("macrotext2") ~= invite then s.click:SetAttribute("macrotext2", invite) end
     s.click:SetShown(r ~= nil)
   end
 end
 
-local function Fmt(v)
-  if v >= 10000 then return ("%.1fk"):format(v / 1000) end
-  return tostring(v)
+---------------------------------------------------------------------------
+-- Updating
+---------------------------------------------------------------------------
+local function UpdateButtons(v, r)
+  local real = not r.sim
+  local grouped = ns.Geo and ns.Geo.InMyGroup(r)
+  local leader = Call(UnitIsGroupLeader, "player")
+  v.invite.rec, v.uninvite.rec, v.find.rec = r, r, r
+  v.invite:SetShown(real and not grouped)
+  v.uninvite:SetShown(real and grouped and leader and true or false)
+  local findable = CanFind(r) and true or false
+  v.find:SetShown(findable)
+  v.find.pin:SetDesaturated(findTag ~= r.tag)
+  v.find.pin:SetAlpha(findTag == r.tag and 1 or 0.8)
 end
 
 local function UpdateVisual(v, r, now)
@@ -286,67 +405,68 @@ local function UpdateVisual(v, r, now)
   local ghost = P.HasFlag(r.flags, P.FLAG_GHOST)
   local live = r.heardAt and now - r.heardAt < ns.Members.STALE_AFTER
 
-  -- Portrait: class icon in the round portrait slot.
   local coords = r.class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[r.class]
   if coords then
-    v.portrait:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
-    v.portrait:SetTexCoord(unpack(coords))
+    v.icon:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+    v.icon:SetTexCoord(unpack(coords))
   else
-    v.portrait:SetTexture("Interface\\CharacterFrame\\TempPortrait")
-    v.portrait:SetTexCoord(0, 1, 0, 1)
+    v.icon:SetTexture("Interface\\CharacterFrame\\TempPortrait")
+    v.icon:SetTexCoord(0, 1, 0, 1)
   end
-  v.portrait:SetDesaturated(dead or ghost or not live)
-
-  v.name:SetText(r.name or r.tag)
+  v.icon:SetDesaturated(dead or ghost or not live)
   v.level:SetText(r.level and tostring(r.level) or "")
 
-  -- Health
-  local hp, hpMax = r.hp, r.hpMax
-  if hpMax and hpMax > 0 and hp then
-    v.health:SetMinMaxValues(0, hpMax)
-    v.health:SetValue((dead or ghost) and 0 or hp)
-    v.health.text:SetText((dead or ghost) and "" or (Fmt(hp) .. " / " .. Fmt(hpMax)))
-  else
-    v.health:SetMinMaxValues(0, 1)
-    v.health:SetValue(1)
-    v.health.text:SetText("")
-  end
+  v.name:SetText(r.name or r.tag)
+  v.name:SetTextColor(ns.ClassColor(r.class))
 
-  -- Power, coloured by type.
-  local pc = r.pwType and PowerBarColor and PowerBarColor[r.pwType]
-  if pc then v.power:SetStatusBarColor(pc.r, pc.g, pc.b) end
-  if r.pwMax and r.pwMax > 0 and r.pw then
-    v.power:SetMinMaxValues(0, r.pwMax)
-    v.power:SetValue(r.pw)
-  else
-    v.power:SetMinMaxValues(0, 1)
-    v.power:SetValue(0)
-  end
-  v.power.text:SetText("")
-
-  if ghost then v.status:SetText("Ghost")
-  elseif dead then v.status:SetText("Dead")
-  elseif not live then v.status:SetText("No signal")
-  else v.status:SetText("") end
-  if v.status:GetText() ~= "" then v.health.text:SetText("") end
-
-  v.combat:SetShown(live and P.HasFlag(r.flags, P.FLAG_COMBAT))
-  v:SetAlpha(live and 1 or 0.55)
-
-  -- Zone / distance line.
-  local sub
-  if P.HasFlag(r.flags, P.FLAG_INSTANCE) then
-    sub = (r.zone and r.zone ~= "" and r.zone or "Instance") .. " (inside)"
-  else
-    local yards = ns.Geo and ns.Geo.DistanceTo(r)
-    if yards then
-      sub = ("%s%d yd"):format((r.zone and r.zone ~= "" and (r.zone .. " - ") or ""), yards)
-    else
-      sub = r.zone or ""
+  -- Status icons (as many as fit), right to left.
+  local n = 0
+  v.groupCount:Hide()
+  if live then
+    for _, s in ipairs(STATUSES) do
+      if n < #v.statuses and s.test(r) then
+        n = n + 1
+        local t = v.statuses[n]
+        SetIcon(t, s)
+        t:Show()
+        if s.key == "group" then
+          v.groupCount:ClearAllPoints()
+          v.groupCount:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", 1, -1)
+          v.groupCount:SetText(r.group)
+          v.groupCount:Show()
+        end
+      end
     end
   end
-  if P.HasFlag(r.flags, P.FLAG_AFK) then sub = "<AFK> " .. sub end
-  v.sub:SetText(sub)
+  for k = n + 1, #v.statuses do v.statuses[k]:Hide() end
+  -- The name stops where the icons start.
+  v.name:SetPoint("TOPRIGHT", v, "TOPRIGHT", -26 - n * (STATUS_SIZE + 1), -4)
+
+  -- Bottom line: where they are, distance and direction.
+  local where
+  if not live then
+    where = "No signal"
+  elseif P.HasFlag(r.flags, P.FLAG_INSTANCE) then
+    where = (r.zone and r.zone ~= "" and r.zone or "Instance") .. " (inside)"
+  else
+    where = r.zone or ""
+    if r.subzone and r.subzone ~= "" and r.subzone ~= r.zone then
+      where = where ~= "" and (where .. ", " .. r.subzone) or r.subzone
+    end
+  end
+  v.sub:SetText(where)
+
+  local yards = live and ns.Geo and ns.Geo.DistanceTo(r)
+  if yards then
+    v.dist:SetText(yards >= 1000 and ("%.1f km"):format(yards / 1093.6) or (yards .. " yd"))
+  else
+    v.dist:SetText("")
+  end
+
+  UpdateButtons(v, r)
+  v:SetAlpha(live and 1 or 0.55)
+  v:SetBackdropBorderColor(live and P.HasFlag(r.flags, P.FLAG_COMBAT) and 1 or 0.6, live and P.HasFlag(r.flags, P.FLAG_COMBAT) and 0.2 or 0.6,
+    live and P.HasFlag(r.flags, P.FLAG_COMBAT) and 0.2 or 0.6, 1)
 end
 
 function F:Refresh()
@@ -359,7 +479,7 @@ function F:Refresh()
   local changed = false
 
   if not InCombatLockdown() then
-    -- Out of combat: pack frames in list order, no gaps.
+    -- Out of combat: pack rows in list order, no gaps.
     local highest = 0
     for i in pairs(assigned) do highest = math.max(highest, i) end
     for i = 1, math.max(#visible, highest) do
@@ -400,16 +520,16 @@ ns:On("PLAYER_LOGIN", function()
   Build()
   F:ApplySettings()
   -- Distance and "No signal" change without messages arriving.
-  C_Timer.NewTicker(0.5, function() F:Refresh() end)
+  C_Timer.NewTicker(0.2, function() F:Refresh() end)
+  C_Timer.NewTicker(FIND_REFRESH, function()
+    if not StillFinding() then return end
+    local r = ns.Members:Get(findTag, true)
+    if r and CanFind(r) then PlaceWaypoint(r) end
+  end)
 end)
 
--- Joining/leaving a group changes who right-click can invite. Wait a frame so
--- the group list in Pins.lua has refreshed first.
 ns:On("GROUP_ROSTER_UPDATE", function()
-  C_Timer.After(0, function()
-    pendingSecure = true
-    F:Refresh()
-  end)
+  C_Timer.After(0, function() F:Refresh() end)
 end)
 
 ns:On("PLAYER_REGEN_ENABLED", function()

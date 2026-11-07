@@ -1,10 +1,11 @@
 # GhostParty
 
-A World of Warcraft: Forever addon that shows Battle.net friends as if you were in a party
-(party frames, minimap and world map pins) **without actually grouping**, so there is no shared loot or XP split.
+A World of Warcraft: Forever addon, shown in game as **Angura**, that shows Battle.net friends as if you
+were in a party (friend roster with statuses, party feed, party chat, minimap and world map pins)
+**without actually grouping**, so there is no shared loot or XP split.
 Everyone involved runs the addon and broadcasts their own state.
 
-Client: WoW Forever 1.60.1 (interface 16001). Current version: 0.3.0.
+Client: WoW Forever 1.60.1 (interface 16001). Current version: 0.4.0.
 
 ## Repository layout
 ```
@@ -36,13 +37,15 @@ version bump ship nothing.
 Or copy the `GhostParty` folder to `World of Warcraft\_forever_\Interface\AddOns\` by hand, then `/reload`.
 
 ## Using it
-1. `/gp friends` lists Battle.net friends online in Forever.
-2. `/gp add <number>` for each friend; they add you back.
-3. `/gp unlock`, drag the frames, `/gp lock`.
-4. `/gp sim` adds a fake friend to test alone.
+1. `/angura friends` lists Battle.net friends online in Forever.
+2. `/angura add <number>` for each friend; they add you back.
+3. `/angura unlock`, drag the roster, `/angura lock`.
+4. `/angura sim` adds a fake friend to test alone.
 
-Minimap button: left-click shows/hides frames, right-click stops/starts sharing.
-`/gp stop` / `/gp start` pauses sharing. Full command list: `/gp help` and [GhostParty/README.md](GhostParty/README.md).
+`/an <message>` is party chat; friends' news and chat appear in the "Angura" chat tab.
+Minimap button: left-click shows/hides the roster, right-click stops/starts sharing.
+`/angura stop` / `start` pauses sharing. `/gp` works the same as `/angura`.
+Full command list: `/angura help` and [GhostParty/README.md](GhostParty/README.md).
 
 ## Development
 - No build step: edit the Lua, run `node tools/check.js GhostParty/*.lua`, then `.\install.ps1` and `/reload` in game.
