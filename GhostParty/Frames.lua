@@ -173,7 +173,13 @@ local function ShowTooltip(owner, r)
   if r.home then GameTooltip:AddLine("Home: " .. r.home, 0.6, 0.6, 0.6) end
   local age = r.heardAt and GetTime() - r.heardAt
   if age and age > 3 then GameTooltip:AddLine(("Last update %ds ago"):format(age), 0.6, 0.6, 0.6) end
-  if not r.hasInfo and not r.sim then GameTooltip:AddLine("Older version: no statuses or news", 1, 0.5, 0.25) end
+  if not r.sim then
+    if r.hasInfo then
+      GameTooltip:AddLine(ns.NAME .. " " .. (r.version or "?"), 0.5, 0.5, 0.5)
+    else
+      GameTooltip:AddLine("Older version (0.3.x): no statuses or news", 1, 0.5, 0.25)
+    end
+  end
   if not r.sim then GameTooltip:AddLine("Click: target (when nearby)", 0.4, 0.8, 1) end
   GameTooltip:Show()
 end

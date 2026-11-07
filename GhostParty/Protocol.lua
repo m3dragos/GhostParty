@@ -11,7 +11,7 @@ ns = ns or {}
 --       hp..pwType are always "-" since 0.4.0 (secret on Forever)
 --   1:H:want:level:class:name:zone      want = 1 asks the receiver to answer with its own H
 --   1:B[:reason]                        leaving: reason 1 (or none) logout, 2 stopped sharing
---   1:I:status:group:instType:subzone:race:guild:home
+--   1:I:status:group:instType:subzone:race:guild:home[:version]
 --       status    ST_* bits (flying, taxi, resting, ...), group = real group size (0 = solo)
 --   1:E:kind[:arg...]                   feed event: lvl, dead, inst, rare, loot, duel
 --   1:C:text                            party chat line (text may contain ':')
@@ -109,6 +109,7 @@ function P.EncodeInfo(i)
     clean(i.race, 24),
     clean(i.guild, 48),
     clean(i.home, 64),
+    clean(i.version, 12),
   }, ":")
 end
 
@@ -199,7 +200,7 @@ function P.Decode(text)
     if status == false or group == false then return nil end
     local function txt(v) return v ~= "" and v or nil end
     return { type = "I", status = status or 0, group = group, instType = txt(f[5]), subzone = txt(f[6]),
-      race = txt(f[7]), guild = txt(f[8]), home = txt(f[9]) }
+      race = txt(f[7]), guild = txt(f[8]), home = txt(f[9]), version = txt(f[10] or "") }
 
   elseif kind == "H" then
     if #f ~= 7 then return nil end

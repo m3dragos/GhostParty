@@ -78,6 +78,7 @@ function S:SampleInfo()
     race = Call(UnitRace, "player"),
     guild = Call(GetGuildInfo, "player"),
     home = Call(GetBindLocation),
+    version = ns.VERSION,
   }
 end
 

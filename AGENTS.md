@@ -52,7 +52,9 @@ Slash: `/angura` (same as `/gp`, `/ghostparty`); party chat `/an`.
   **Don't pause sending on it**: 0.3.1 did and friends flickered to "No signal", while 0.3.0 clients
   (never paused) got through. Always try the send; the per-send result decides. Show it in `/gp status` only.
   `SendAddonMessage` returns `Enum.SendAddonMessageResult`: anything but `Success` is a failure, throttle codes mean retry.
-  The owner still has an open "No signal" question from 0.3.1+: `signalLog` (Members.lua) records gaps for it.
+  "No signal" (owner, 2026-11-07): `signalLog` showed one friend going silent for 12-30 s at a time, with nothing
+  unreadable or dropped on our side and the gap often ending with their 30 s hello: their client held messages,
+  which is the 0.3.1 lockdown pause (the released `main` still had it). Gap lines now include the friend's version.
 - "Appear Offline" hides a friend's game account from Battle.net: fall back to addon `WHISPER` to known characters.
 - Local install (owner's machine): `G:\Games\World of Warcraft\_forever_\Interface\AddOns\`.
   Other installed addons there (Kinship, EllesmereUI, LoreForever, ForeverPlusPlus) are useful **read-only**
@@ -76,7 +78,7 @@ Slash: `/angura` (same as `/gp`, `/ghostparty`); party chat `/an`.
 Protocol v1:
 - `1:S:map:x:y:facing:speed:hp:hpMax:pw:pwMax:pwType:flags` (hp..pwType always `-` since 0.4.0)
 - `1:H:want:level:class:name:zone`, `1:B[:reason]` (2 = stopped sharing)
-- since 0.4.0: `1:I:status:group:instType:subzone:race:guild:home`, `1:E:kind:args...`, `1:C:text`
+- since 0.4.0: `1:I:status:group:instType:subzone:race:guild:home:version`, `1:E:kind:args...`, `1:C:text`
   (0.3.x drops I/E/C as malformed and reads `1:B:2` as a plain bye).
 
 `-` = unknown. Changing S/H field counts breaks older clients: bump `P.VERSION` and tell the owner everyone

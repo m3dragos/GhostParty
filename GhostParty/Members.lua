@@ -76,7 +76,7 @@ end
 
 local function OnInfo(r, m)
   r.status, r.group, r.instType = m.status, m.group, m.instType
-  r.subzone, r.race, r.guild, r.home = m.subzone, m.race, m.guild, m.home
+  r.subzone, r.race, r.guild, r.home, r.version = m.subzone, m.race, m.guild, m.home, m.version
   r.hasInfo = true
 end
 
@@ -138,9 +138,9 @@ local function LogGap(r, msg, via, now)
   local C = ns.Comm
   local mark = r.mark or {}
   local P = ns.Protocol
-  local line = ("%s gap %.1fs from %s: back via %s (%s), before via %s; their flags before %s%s;"
+  local line = ("%s gap %.1fs from %s (%s): back via %s (%s), before via %s; their flags before %s%s;"
     .. " during gap: unreadable %d, dropped %d, failed sends %d; our lockdown %s, our combat %s"):format(
-    date("%m-%d %H:%M:%S"), gap, r.tag, via or "?", msg.type, r.via or "?",
+    date("%m-%d %H:%M:%S"), gap, r.tag, r.version or (r.hasInfo and "?" or "0.3.x"), via or "?", msg.type, r.via or "?",
     tostring(r.flags or "?"), P.HasFlag(r.flags, P.FLAG_COMBAT) and " (combat)" or "",
     C.stats.unreadable - (mark.unreadable or 0), C.stats.dropped - (mark.dropped or 0),
     C.stats.failed - (mark.failed or 0),
