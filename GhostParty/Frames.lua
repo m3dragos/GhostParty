@@ -17,7 +17,14 @@ ns.Frames = F
 local P = ns.Protocol
 local Call = ns.Call
 
-local W, H, GAP = 236, 38, 2
+local H, GAP = 38, 2
+local MIN_W, MAX_W, DEFAULT_W = 180, 420, 236
+
+-- Row width: the player's choice (drag the grip on the handle while unlocked).
+local function Width()
+  local w = tonumber(ns.db and ns.db.width) or DEFAULT_W
+  return math.max(MIN_W, math.min(MAX_W, w))
+end
 local ICON = 28
 local STATUS_SIZE = 14
 
@@ -211,7 +218,7 @@ end
 
 local function BuildVisual(i)
   local v = CreateFrame("Frame", nil, anchor, "BackdropTemplate")
-  v:SetSize(W, H)
+  v:SetSize(Width(), H)
   PlaceSlot(v, i)
   v:SetFrameLevel(anchor:GetFrameLevel() + 1)
   v:SetBackdrop({
@@ -287,7 +294,7 @@ end
 
 local function BuildClick(i)
   local b = CreateFrame("Button", "GhostPartySlot" .. i, anchor, "SecureActionButtonTemplate")
-  b:SetSize(W, H)
+  b:SetSize(Width(), H)
   PlaceSlot(b, i)
   b:SetFrameLevel(anchor:GetFrameLevel() + 2)
   b:RegisterForClicks("AnyUp", "AnyDown")
@@ -312,13 +319,13 @@ end
 
 local function Build()
   anchor = CreateFrame("Frame", "GhostPartyAnchor", UIParent)
-  anchor:SetSize(W, H)
+  anchor:SetSize(Width(), H)
   anchor:SetMovable(true)
   anchor:SetClampedToScreen(true)
 
   handle = CreateFrame("Frame", nil, anchor, "BackdropTemplate")
   handle:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 2)
-  handle:SetSize(W, 18)
+  handle:SetSize(Width(), 18)
   handle:SetBackdrop({
     bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
     edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -328,8 +335,11 @@ local function Build()
   handle:SetBackdropColor(0.15, 0.1, 0.02, 0.9)
   handle:SetBackdropBorderColor(1, 0.82, 0, 1)
   local label = handle:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  label:SetPoint("CENTER")
-  label:SetText(ns.NAME .. " - drag to move, /angura lock")
+  label:SetPoint("LEFT", handle, "LEFT", 6, 0)
+  label:SetPoint("RIGHT", handle, "RIGHT", -20, 0)
+  label:SetJustifyH("LEFT")
+  label:SetWordWrap(false)
+  label:SetText(ns.NAME .. " - drag to move, grip to resize")
   handle:EnableMouse(true)
   handle:RegisterForDrag("LeftButton")
   handle:SetScript("OnDragStart", function()
@@ -341,7 +351,50 @@ local function Build()
     ns.db.point = { p, rp, x, y }
   end)
 
+  -- Resize grip (width only; height follows the number of friends).
+  local grip = CreateFrame("Button", nil, handle)
+  grip:SetSize(16, 16)
+  grip:SetPoint("RIGHT", handle, "RIGHT", -2, 0)
+  grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  grip:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Drag to resize", 1, 1, 1)
+    GameTooltip:Show()
+  end)
+  grip:SetScript("OnLeave", GameTooltip_Hide)
+  local startX, startW, liveW
+  local function CursorX() return GetCursorPosition() / anchor:GetEffectiveScale() end
+  grip:SetScript("OnMouseDown", function(self)
+    if InCombatLockdown() then return end
+    startX, startW, liveW = CursorX(), Width(), Width()
+    self:SetScript("OnUpdate", function()
+      if InCombatLockdown() then return end
+      liveW = math.max(MIN_W, math.min(MAX_W, math.floor(startW + CursorX() - startX + 0.5)))
+      F:SetWidths(liveW)
+    end)
+  end)
+  grip:SetScript("OnMouseUp", function(self)
+    self:SetScript("OnUpdate", nil)
+    if liveW then ns.db.width = liveW end
+    startX, liveW = nil, nil
+    F:ApplySettings()
+  end)
+
   ApplyAnchor()
+end
+
+-- Every row's width (secure click buttons too, so out of combat only).
+function F:SetWidths(w)
+  if not anchor or InCombatLockdown() then return end
+  w = w or Width()
+  anchor:SetWidth(w)
+  handle:SetWidth(w)
+  for _, s in pairs(slots) do
+    s.visual:SetWidth(w)
+    if s.click then s.click:SetWidth(w) end
+  end
 end
 
 -- Slots are made on demand, so there's no limit on friends. The visual part
@@ -368,6 +421,7 @@ function F:ApplySettings()
     PlaceSlot(s.visual, i)
     if s.click then PlaceSlot(s.click, i) end
   end
+  self:SetWidths()
   handle:SetShown(not ns.db.locked)
   anchor:SetShown(ns.db.showFrames)
   self:Refresh()

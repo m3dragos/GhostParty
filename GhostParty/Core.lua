@@ -5,7 +5,7 @@ local ADDON, ns = ...
 -- Every member runs the addon and broadcasts their own state over Battle.net
 -- addon messages; nothing is read from other players.
 
-ns.VERSION = "0.4.0"
+ns.VERSION = "0.4.1"
 ns.PROTOCOL = 1
 ns.NAME = "Angura" -- the name players see; the project, folder and saved variables stay GhostParty
 
@@ -14,6 +14,7 @@ local DEFAULTS = {
   chars = {},          -- BattleTag -> characters seen, newest first (for Appear Offline)
   point = nil,         -- saved frame position { point, relPoint, x, y }
   scale = 1.2,
+  width = 236,         -- roster row width (drag the grip on the handle while unlocked)
   locked = false,
   showFrames = true,
   showPins = true,

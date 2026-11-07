@@ -91,6 +91,9 @@ whole message.
   Defer with `pendingSecure` and apply on `PLAYER_REGEN_ENABLED`. A slot's secure button is created
   lazily out of combat (`EnsureSlot`); a friend appearing mid-combat gets a row but no click until combat ends.
   The row's Invite/Uninvite/Find buttons are insecure and sit above the click layer (higher frame level).
+  Rows repack (no gaps) at once out of combat; in combat a leaver leaves a gap until `PLAYER_REGEN_ENABLED`,
+  because moving the visuals alone would put them over the wrong secure button. Width (`db.width`, grip on the
+  handle) is applied to the click buttons too, so it only changes out of combat.
 - More members = same total send budget split thinner (4 prefixes × ~1 msg/s). Don't "fix" by raising rates.
   Party chat and news share it.
 - Every WoW API call that can fail or return secrets goes through `ns.Call` or `pcall`.
@@ -102,6 +105,8 @@ whole message.
   and flights as too spammy, and doesn't want progress bars. Presence: a bye waits 25 s (a /reload sends one
   and says hello again); "came online" needs a hello with `want` (they just logged in) or an earlier
   "went offline". Re-entering the same instance within 30 min of leaving isn't news.
+- Sticky `/an` (`Feed.lua`): post-hooks `OnEditFocusGained`/`OnEditFocusLost`/`OnTextChanged` on the chat edit boxes and
+  types `/an ` into an empty box; never writes Blizzard's edit box attributes or fields (taint). Whisper replies are left alone.
 - Text from friends is untrusted: `Feed.lua` `Sanitize` keeps only item links (rebuilt by us) and shows
   every other `|` escape literally.
 - Whisper probes back off per member (20 s doubling to 5 min, reset when heard from or when they leave

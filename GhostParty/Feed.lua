@@ -41,12 +41,13 @@ function Feed:Frame()
   return FindTab()
 end
 
-local function Say(text, r, g, b)
+-- News goes to the Angura tab (or the main window if it's closed). Party chat
+-- (alsoMain) goes to the main chat window as well, like real party chat.
+local function Say(text, r, g, b, alsoMain)
   local frame = FindTab()
-  if frame then
-    frame:AddMessage(text, r, g, b)
-  else
-    DEFAULT_CHAT_FRAME:AddMessage("|cff9fd8ff[" .. ns.NAME .. "]|r " .. text, r, g, b)
+  if frame then frame:AddMessage(text, r, g, b) end
+  if (not frame or alsoMain) and frame ~= DEFAULT_CHAT_FRAME then
+    DEFAULT_CHAT_FRAME:AddMessage("[" .. ns.NAME .. "] " .. text, r, g, b)
   end
 end
 
@@ -240,7 +241,7 @@ end
 function Feed:OnChat(rec, text)
   if type(text) ~= "string" or text == "" then return end
   local c = ChatTypeInfo and ChatTypeInfo.PARTY
-  Say("[" .. Who(rec) .. "]: " .. Sanitize(text), c and c.r or 0.67, c and c.g or 0.67, c and c.b or 1)
+  Say("[" .. Who(rec) .. "]: " .. Sanitize(text), c and c.r or 0.67, c and c.g or 0.67, c and c.b or 1, true)
 end
 
 ---------------------------------------------------------------------------
@@ -257,8 +258,57 @@ function Feed:SendChat(text)
   local _, class = UnitClass("player")
   local c = ChatTypeInfo and ChatTypeInfo.PARTY
   Say("[|cff" .. Hex(ns.ClassColor(class)) .. UnitName("player") .. "|r]: " .. Sanitize(text),
-    c and c.r or 0.67, c and c.g or 0.67, c and c.b or 1)
+    c and c.r or 0.67, c and c.g or 0.67, c and c.b or 1, true)
   if ns.Comm:InEncounter() then ns.Print("(Sent when the boss fight ends.)") end
+  Feed.sticky = true
+end
+
+---------------------------------------------------------------------------
+-- Sticky /an: after a line sent with /an, the chat box opens with "/an "
+-- already typed (like /p keeps you in party chat), until you send anything
+-- else. Only post-hooks and text on the box; nothing of Blizzard's is changed.
+---------------------------------------------------------------------------
+local STICKY = "/an "
+local lastTyped = {}   -- edit box -> last non-empty text typed in it
+
+local function IsAn(text)
+  local t = text:lower()
+  return t == "/an" or t:sub(1, 4) == "/an "
+end
+
+local function BoxText(box)
+  local ok, text = pcall(box.GetText, box)
+  if ok and type(text) == "string" and not Secret(text) then return text end
+end
+
+local function Opened(box)
+  lastTyped[box] = false
+  if not Feed.sticky then return end
+  C_Timer.After(0, function()
+    if not (Feed.sticky and box:IsShown() and box:HasFocus()) or BoxText(box) ~= "" then return end
+    -- A whisper reply (R, or clicking a name) keeps its own target.
+    local okType, chatType = pcall(box.GetAttribute, box, "chatType")
+    if okType and (chatType == "WHISPER" or chatType == "BN_WHISPER") then return end
+    pcall(box.SetText, box, STICKY)
+    pcall(box.SetCursorPosition, box, #STICKY)
+  end)
+end
+
+local function Closed(box)
+  local t = lastTyped[box]
+  if t and not IsAn(t) then Feed.sticky = false end
+  lastTyped[box] = false
+end
+
+local function HookBox(box)
+  if not box or lastTyped[box] ~= nil or not box.HookScript then return end
+  lastTyped[box] = false
+  box:HookScript("OnEditFocusGained", Opened)
+  box:HookScript("OnEditFocusLost", Closed)
+  box:HookScript("OnTextChanged", function(self)
+    local text = BoxText(self)
+    if text and text ~= "" then lastTyped[self] = text end
+  end)
 end
 
 ---------------------------------------------------------------------------
@@ -383,4 +433,8 @@ end)
 
 ns:On("PLAYER_LOGIN", function()
   if not ns.db.chatTab then C_Timer.After(3, function() Feed:MakeTab() end) end
+  for i = 1, (NUM_CHAT_WINDOWS or 10) do
+    local cf = _G["ChatFrame" .. i]
+    HookBox(_G["ChatFrame" .. i .. "EditBox"] or (cf and cf.editBox))
+  end
 end)

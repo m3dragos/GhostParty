@@ -10,7 +10,7 @@ Copy the `GhostParty` folder to `World of Warcraft\_forever_\Interface\AddOns\`.
 ## Setup (each player)
 1. `/angura friends` lists Battle.net friends online in Forever, numbered.
 2. `/angura add 2` (or `/angura add Name#1234`) for each friend. Both sides must add each other.
-3. `/angura unlock`, drag the gold handle, `/angura lock`.
+3. `/angura unlock`, drag the gold handle to move the roster (the grip at its right end sets the width), `/angura lock`.
 
 Try it alone first: `/angura sim` adds a fake friend who runs circles around you, changes status,
 posts news and says hello on party chat. `/gp` works the same as `/angura`.
@@ -18,9 +18,9 @@ posts news and says hello on party chat. `/gp` works the same as `/angura`.
 ## Commands
 | Command | |
 |---|---|
-| `/an <message>` | party chat with everyone you share with who is online |
+| `/an <message>` | party chat with everyone you share with who is online; sticky like `/p` (the chat box opens with `/an ` until you send something else) |
 | `/angura friends`, `add`, `remove`, `list` | manage who you share with (no limit) |
-| `/angura lock` / `unlock` / `reset` / `scale 1.2` | roster position and size |
+| `/angura lock` / `unlock` / `reset` / `scale 1.2` | roster position and size (unlocked: drag the handle's grip to change the width) |
 | `/angura stop` / `start` | stop / resume sharing; also hides map pins (remembered across reloads) |
 | `/angura frames` / `pins` | toggle the roster / map pins |
 | `/angura chat` | reopen the Angura chat tab if you closed it |
@@ -39,6 +39,7 @@ posts news and says hello on party chat. `/gp` works the same as `/angura`.
     Blizzard's map pin and arrow on them (click again to stop).
   - Hover for race, guild, home inn and more.
 - **Angura chat tab** (made once, then yours to move, dock or close): friends' news and party chat.
+  Party chat also shows in your main chat window, as `[Angura] [Name]: ...` in party colours.
   - News: level-ups (every 10th level gets a banner and sound), deaths, entering a dungeon, raid or
     battleground, rare kills, blue-or-better loot (hover the link), duels, coming online / going offline.
 - **Map pins**: class-coloured pins on the minimap (clamped to the edge when far) and the world map.
